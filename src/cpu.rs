@@ -231,11 +231,7 @@ impl Into<Vec<u8>> for Op {
 //            Op::StoreDec => vec![0x00],
 //            Op::Load16(Reg16::BC, u16) => vec![0x00],
 //            Op::Load16(Reg16::DE, u16) => vec![0x00],
-            Op::Load16(Reg16::HL, word) => {
-                let h = (word >> 8) as u8;
-                let l = (word & 0x00FF) as u8;
-                vec![0x21, h, l]
-            }
+            Op::Load16(Reg16::HL, word) => vec![0x21, util::get_high_byte(word), util::get_low_byte(word)],
 //            Op::LoadSP => vec![0x00],
 //            Op::Push(Register16) => vec![0x00],
 //            Op::Pop(Register16) => vec![0x00],
@@ -466,7 +462,7 @@ impl Cpu {
             let interrupt_enable_flags = memory.get(0xFFFF).unwrap_or_else(|err| panic!(err));
             let interrupt_flags = memory.get(0xFF0F).unwrap_or_else(|err| panic!(err));
 
-            if util::bit_enabled(interrupt_enable_flags, 0) && util::bit_enabled(interrupt_flags, 0) {
+            if util::get_bit(interrupt_enable_flags, 0) && util::get_bit(interrupt_flags, 0) {
                 // VBlank
                 self.sp = self.pc;
                 self.pc = 0x0040;
@@ -476,7 +472,6 @@ impl Cpu {
         Ok(true)
     }
 
-
     fn decode(bytes: &[u8]) -> Result<Option<Op>, Error> {
         match bytes {
             [0x00] => Ok(Some(Op::Nop)),
@@ -485,14 +480,8 @@ impl Cpu {
             [0x80] => Ok(Some(Op::Add(Reg8::B))),
             [0x3E, val] => Ok(Some(Op::LoadImm(Reg8::A, val.clone()))),
             [0x06, val] => Ok(Some(Op::LoadImm(Reg8::B, val.clone()))),
-            [0x21, h, l] => {
-                let h: u16 = h.clone() as u16;
-                let l: u16 = l.clone() as u16;
-                let word: u16 = (h << 8) + l;
-                Ok(Some(Op::Load16(Reg16::HL, word)))
-            }
-                [0x77] =>
-            Ok(Some(Op::StoreInd(Reg16::HL, Reg8::A))),
+            [0x21, h, l] => Ok(Some(Op::Load16(Reg16::HL, util::make_word(*h, *l)))),
+            [0x77] => Ok(Some(Op::StoreInd(Reg16::HL, Reg8::A))),
             _ => {
                 if bytes.len() > 3 {
                     panic!("Unimplemented {:02x?}", &bytes)
@@ -621,35 +610,25 @@ impl Cpu {
 
     fn get_byte_register(&self, reg: Reg8) -> u8 {
         match reg {
-            Reg8::A => (self.registers[0] >> 8) as u8,
-            Reg8::B => (self.registers[1] >> 8) as u8,
-            Reg8::C => (self.registers[1] & 0xFF) as u8,
-            Reg8::D => (self.registers[2] >> 8) as u8,
-            Reg8::E => (self.registers[2] & 0xFF) as u8,
-            Reg8::H => (self.registers[3] >> 8) as u8,
-            Reg8::L => (self.registers[3] & 0xFF) as u8,
+            Reg8::A => util::get_high_byte(self.registers[0]),
+            Reg8::B => util::get_high_byte(self.registers[1]),
+            Reg8::C => util::get_low_byte(self.registers[1]),
+            Reg8::D => util::get_high_byte(self.registers[2]),
+            Reg8::E => util::get_low_byte(self.registers[2]),
+            Reg8::H => util::get_high_byte(self.registers[3]),
+            Reg8::L => util::get_low_byte(self.registers[3]),
         }
     }
 
     fn set_byte_register(&mut self, reg: Reg8, byte: u8) {
         match reg {
-            Reg8::A => {
-                let shift = (byte as u16) << 8;
-                let mask = (0xFF as u16) << 8;
-                let word = (!mask & self.registers[0]) | shift;
-                self.registers[0] = word;
-            }
-            Reg8::B => {
-                let shift = (byte as u16) << 8;
-                let mask = (0xFF as u16) << 8;
-                let word = (!mask & self.registers[1]) | shift;
-                self.registers[1] = word
-            }
-            Reg8::C => (),
-            Reg8::D => (),
-            Reg8::E => (),
-            Reg8::H => (),
-            Reg8::L => (),
+            Reg8::A => util::set_high_byte(&mut self.registers[0], byte),
+            Reg8::B => util::set_high_byte(&mut self.registers[1], byte),
+            Reg8::C => util::set_low_byte(&mut self.registers[1], byte),
+            Reg8::D => util::set_high_byte(&mut self.registers[2], byte),
+            Reg8::E => util::set_low_byte(&mut self.registers[2], byte),
+            Reg8::H => util::set_high_byte(&mut self.registers[3], byte),
+            Reg8::L => util::set_low_byte(&mut self.registers[3], byte),
         }
     }
 
@@ -671,19 +650,35 @@ impl Cpu {
 
     fn get_flag(&self, flag: Flag) -> bool {
         match flag {
-            Flag::C => true,
-            Flag::H => true,
-            Flag::N => true,
-            Flag::Z => true,
+            Flag::C => util::get_bit(util::get_low_byte(self.registers[0]), 0),
+            Flag::H => util::get_bit(util::get_low_byte(self.registers[0]), 0),
+            Flag::N => util::get_bit(util::get_low_byte(self.registers[0]), 0),
+            Flag::Z => util::get_bit(util::get_low_byte(self.registers[0]), 0),
         }
     }
 
     fn set_flag(&mut self, flag: Flag, value: bool) {
         match flag {
-            Flag::C => (),
-            Flag::H => (),
-            Flag::N => (),
-            Flag::Z => (),
+            Flag::C => {
+                let mut byte = util::get_low_byte(self.registers[0]);
+                util::set_bit(&mut byte, 0, value);
+                util::set_high_byte(&mut self.registers[0], byte);
+            }
+            Flag::H => {
+                let mut byte = util::get_low_byte(self.registers[0]);
+                util::set_bit(&mut byte, 0, value);
+                util::set_high_byte(&mut self.registers[0], byte);
+            }
+            Flag::N => {
+                let mut byte = util::get_low_byte(self.registers[0]);
+                util::set_bit(&mut byte, 0, value);
+                util::set_high_byte(&mut self.registers[0], byte);
+            }
+            Flag::Z => {
+                let mut byte = util::get_low_byte(self.registers[0]);
+                util::set_bit(&mut byte, 0, value);
+                util::set_high_byte(&mut self.registers[0], byte);
+            }
         }
     }
 }
