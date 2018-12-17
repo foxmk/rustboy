@@ -33,10 +33,10 @@ enum Op {
     Load(Reg8, Reg8),
     LoadImm(Reg8, u8),
     LoadInd(Reg8, Reg16),
-    LoadIndImm(Reg8, u16),
+    LoadIndAImm(u16),
     StoreInd(Reg16, Reg8),
-    StoreImmediate(Reg16, u8),
-    StoreIndImmediate(u16, Reg8),
+    StoreImmediate(u8),
+    StoreIndAImmediate(u16),
     LoadIO(u8),
     StoreIO(u8),
     LoadIOC,
@@ -186,30 +186,19 @@ impl Into<Vec<u8>> for Op {
             Op::LoadInd(Reg8::E, Reg16::HL) => vec![0x5E],
             Op::LoadInd(Reg8::H, Reg16::HL) => vec![0x66],
             Op::LoadInd(Reg8::L, Reg16::HL) => vec![0x6E],
-//            Op::LoadIndImm(Reg8, word) => vec![0x00],
-//            Op::StoreInd(Reg16::BC, Reg8::A) => vec![0x00],
-//            Op::StoreInd(Reg16::BC, Reg8::B) => vec![0x00],
-//            Op::StoreInd(Reg16::BC, Reg8::C) => vec![0x00],
-//            Op::StoreInd(Reg16::BC, Reg8::D) => vec![0x00],
-//            Op::StoreInd(Reg16::BC, Reg8::E) => vec![0x00],
-//            Op::StoreInd(Reg16::BC, Reg8::H) => vec![0x00],
-//            Op::StoreInd(Reg16::BC, Reg8::L) => vec![0x00],
-//            Op::StoreInd(Reg16::DE, Reg8::A) => vec![0x00],
-//            Op::StoreInd(Reg16::DE, Reg8::B) => vec![0x00],
-//            Op::StoreInd(Reg16::DE, Reg8::C) => vec![0x00],
-//            Op::StoreInd(Reg16::DE, Reg8::D) => vec![0x00],
-//            Op::StoreInd(Reg16::DE, Reg8::E) => vec![0x00],
-//            Op::StoreInd(Reg16::DE, Reg8::H) => vec![0x00],
-//            Op::StoreInd(Reg16::DE, Reg8::L) => vec![0x00],
+            Op::LoadIndAImm(word) => vec![0xFA, util::get_high_byte(word), util::get_low_byte(word)],
+            // TODO: Split StoreInd Opcodes
+            Op::StoreInd(Reg16::BC, Reg8::A) => vec![0x02],
+            Op::StoreInd(Reg16::DE, Reg8::A) => vec![0x12],
             Op::StoreInd(Reg16::HL, Reg8::A) => vec![0x77],
-//            Op::StoreInd(Reg16::HL, Reg8::B) => vec![0x00],
-//            Op::StoreInd(Reg16::HL, Reg8::C) => vec![0x00],
-//            Op::StoreInd(Reg16::HL, Reg8::D) => vec![0x00],
-//            Op::StoreInd(Reg16::HL, Reg8::E) => vec![0x00],
-//            Op::StoreInd(Reg16::HL, Reg8::H) => vec![0x00],
-//            Op::StoreInd(Reg16::HL, Reg8::L) => vec![0x00],
-//            Op::StoreImmediate(Register16, u8) => vec![0x00],
-//            Op::StoreIndImmediate(u16, Reg8) => vec![0x00],
+            Op::StoreInd(Reg16::HL, Reg8::B) => vec![0x70],
+            Op::StoreInd(Reg16::HL, Reg8::C) => vec![0x71],
+            Op::StoreInd(Reg16::HL, Reg8::D) => vec![0x72],
+            Op::StoreInd(Reg16::HL, Reg8::E) => vec![0x73],
+            Op::StoreInd(Reg16::HL, Reg8::H) => vec![0x74],
+            Op::StoreInd(Reg16::HL, Reg8::L) => vec![0x75],
+            Op::StoreImmediate(byte) => vec![0x36, byte],
+            Op::StoreIndAImmediate(word) => vec![0xEA, util::get_high_byte(word), util::get_low_byte(word)],
 //            Op::LoadIO(u8) => vec![0x00],
 //            Op::StoreIO(u8) => vec![0x00],
 //            Op::LoadIOC => vec![0x00],
@@ -294,10 +283,10 @@ impl fmt::Display for Op {
             Op::Load(dest, src) => write!(f, "LD {:?}, {:?}", dest, src),
             Op::LoadImm(dest, byte) => write!(f, "LD {:?}, {:#04x}", dest, byte),
             Op::LoadInd(dest, src) => write!(f, "LD {:?}, ({:?})", dest, src),
-//            Op::LoadIndImm(Reg8, u16) => write!(f, ""),
-            Op::StoreInd(Reg16::HL, Reg8::A) => write!(f, "LD (HL), A"),
-//            Op::StoreImmediate(Register16, u8) => write!(f, ""),
-//            Op::StoreIndImmediate(u16, Reg8) => write!(f, ""),
+            Op::LoadIndAImm(src) => write!(f, "LD A, ({:#04x})", src),
+            Op::StoreInd(dest, src) => write!(f, "LD ({:?}), {:?}", dest, src),
+            Op::StoreImmediate(byte) => write!(f, "LD (HL), {:#04x}", byte),
+            Op::StoreIndAImmediate(dest) => write!(f, "LD ({:#06x}), A", dest),
 //            Op::LoadIO(u8) => write!(f, ""),
 //            Op::StoreIO(u8) => write!(f, ""),
 //            Op::LoadIOC => write!(f, ""),
@@ -528,15 +517,24 @@ impl Cpu {
             [0x5E] => Ok(Some(Op::LoadInd(Reg8::E, Reg16::HL))),
             [0x66] => Ok(Some(Op::LoadInd(Reg8::H, Reg16::HL))),
             [0x6E] => Ok(Some(Op::LoadInd(Reg8::L, Reg16::HL))),
-
-
+            [0xFA, h, l] => Ok(Some(Op::LoadIndAImm(util::make_word(*h, *l)))),
+            [0x02] => Ok(Some(Op::StoreInd(Reg16::BC, Reg8::A))),
+            [0x12] => Ok(Some(Op::StoreInd(Reg16::DE, Reg8::A))),
+            [0x77] => Ok(Some(Op::StoreInd(Reg16::HL, Reg8::A))),
+            [0x70] => Ok(Some(Op::StoreInd(Reg16::HL, Reg8::B))),
+            [0x71] => Ok(Some(Op::StoreInd(Reg16::HL, Reg8::C))),
+            [0x72] => Ok(Some(Op::StoreInd(Reg16::HL, Reg8::D))),
+            [0x73] => Ok(Some(Op::StoreInd(Reg16::HL, Reg8::E))),
+            [0x74] => Ok(Some(Op::StoreInd(Reg16::HL, Reg8::H))),
+            [0x75] => Ok(Some(Op::StoreInd(Reg16::HL, Reg8::L))),
+            [0x36, byte] => Ok(Some(Op::StoreImmediate(*byte))),
+            [0xEA, h, l] => Ok(Some(Op::StoreIndAImmediate(util::make_word(*h, *l)))),
 
             [0x00] => Ok(Some(Op::Nop)),
             [0x76] => Ok(Some(Op::Halt)),
             [0x10, 0x00] => Ok(Some(Op::Stop)),
             [0x80] => Ok(Some(Op::Add(Reg8::B))),
             [0x21, h, l] => Ok(Some(Op::Load16(Reg16::HL, util::make_word(*h, *l)))),
-            [0x77] => Ok(Some(Op::StoreInd(Reg16::HL, Reg8::A))),
             _ => {
                 if bytes.len() > 3 {
                     panic!("Unimplemented {:02x?}", &bytes)
@@ -568,7 +566,15 @@ impl Cpu {
                 self.set_byte_register(dest, byte);
                 Ok(true)
             }
-//            Op::LoadIndImm(Reg8, u16) => Ok(false),
+            Op::LoadIndAImm(src_addr) => {
+                let byte = match self.memory.borrow().get(src_addr) {
+                    Ok(byte) => byte,
+                    Err(_) => return Err(Error::InvalidMemoryAccess),
+                };
+
+                self.set_byte_register(Reg8::A, byte);
+                Ok(true)
+            }
             Op::StoreInd(dest, src) => {
                 let dest_addr = self.get_word_register(dest);
                 let byte = self.get_byte_register(src);
@@ -577,8 +583,20 @@ impl Cpu {
                     Err(_) => Err(Error::InvalidMemoryAccess)
                 }
             }
-//            Op::StoreImmediate(Register16, u8) => Ok(false),
-//            Op::StoreIndImmediate(u16, Reg8) => Ok(false),
+            Op::StoreImmediate(byte) => {
+                let dest_addr = self.get_word_register(Reg16::HL);
+                match self.memory.borrow_mut().set(dest_addr, byte) {
+                    Ok(_) => Ok(true),
+                    Err(_) => Err(Error::InvalidMemoryAccess)
+                }
+            }
+            Op::StoreIndAImmediate(dest_addr) => {
+                let byte = self.get_byte_register(Reg8::A);
+                match self.memory.borrow_mut().set(dest_addr, byte) {
+                    Ok(_) => Ok(true),
+                    Err(_) => Err(Error::InvalidMemoryAccess)
+                }
+            },
 //            Op::LoadIO(u8) => Ok(false),
 //            Op::StoreIO(u8) => Ok(false),
 //            Op::LoadIOC => Ok(false),
