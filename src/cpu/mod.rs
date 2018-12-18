@@ -9,6 +9,21 @@ use std::rc::Weak;
 use crate::util;
 use crate::memory;
 
+const FLAG_IE: u16 = 0xFFFF;
+const FLAG_IF: u16 = 0xFF0F;
+
+const INT_VBLANK: u8 = 0;
+const INT_LCD_STAT: u8 = 1;
+const INT_TIMER: u8 = 2;
+const INT_SERIAL: u8 = 3;
+const INT_JOYSTICK: u8 = 4;
+
+const INT_VBLANK_ADDR: u16 = 0x0040;
+const INT_LCD_STAT_ADDR: u16 = 0x0040;
+const INT_TIMER_ADDR: u16 = 0x0040;
+const INT_SERIAL_ADDR: u16 = 0x0040;
+const INT_JOYSTICK_ADDR: u16 = 0x0040;
+
 #[derive(Debug, Eq, PartialEq)]
 pub enum Error {
     UnknownOpCode,
@@ -24,18 +39,9 @@ enum Reg16 { AF, BC, DE, HL, SP, PC }
 #[derive(Debug)]
 enum Flag { Z, N, H, C }
 
-#[derive(Debug)]
-enum Register { Register8(Reg8), Register16(Reg16), Flag(Flag) }
-
 mod op;
 
 use crate::cpu::op::*;
-
-enum State {
-    Fetch,
-    Decode,
-    Exec,
-}
 
 pub struct Cpu {
     pc: u16,
@@ -91,20 +97,63 @@ impl Cpu {
     }
 
     fn process_interrupts(&mut self) -> Result<bool, Error> {
-        // Process interrupts
         if self.interrupt_enable_master {
-            let memory = self.memory.borrow();
-            let interrupt_enable_flags = memory.get(0xFFFF).unwrap_or_else(|err| panic!(err));
-            let interrupt_flags = memory.get(0xFF0F).unwrap_or_else(|err| panic!(err));
+            let interrupt_enable_flags = match self.memory.borrow().get(FLAG_IE) {
+                Ok(byte) => byte,
+                Err(_) => return Err(Error::InvalidMemoryAccess)
+            };
 
-            if util::get_bit(interrupt_enable_flags, 0) && util::get_bit(interrupt_flags, 0) {
-                // VBlank
-                self.sp = self.pc;
-                self.pc = 0x0040;
+            let interrupt_flags = match self.memory.borrow().get(FLAG_IF) {
+                Ok(byte) => byte,
+                Err(_) => return Err(Error::InvalidMemoryAccess)
+            };
+
+            match self.process_interrupt_if_requested_and_allowed(interrupt_enable_flags, interrupt_flags, INT_VBLANK, INT_VBLANK_ADDR) {
+                Ok(false) => (),
+                other => return other,
+            }
+            match self.process_interrupt_if_requested_and_allowed(interrupt_enable_flags, interrupt_flags, INT_LCD_STAT, INT_LCD_STAT_ADDR) {
+                Ok(false) => (),
+                other => return other,
+            }
+            match self.process_interrupt_if_requested_and_allowed(interrupt_enable_flags, interrupt_flags, INT_TIMER, INT_TIMER_ADDR) {
+                Ok(false) => (),
+                other => return other,
+            }
+            match self.process_interrupt_if_requested_and_allowed(interrupt_enable_flags, interrupt_flags, INT_SERIAL, INT_SERIAL_ADDR) {
+                Ok(false) => (),
+                other => return other,
+            }
+            match self.process_interrupt_if_requested_and_allowed(interrupt_enable_flags, interrupt_flags, INT_JOYSTICK, INT_JOYSTICK_ADDR) {
+                Ok(false) => (),
+                other => return other,
             }
         }
 
         Ok(true)
+    }
+
+    fn process_interrupt_if_requested_and_allowed(&mut self, interrupt_enable_flags: u8, interrupt_flags: u8, interrupt: u8, interrupt_addr: u16) -> Result<bool, Error> {
+        if util::get_bit(interrupt_enable_flags, interrupt) && util::get_bit(interrupt_flags, interrupt) {
+            self.interrupt_enable_master = false;
+
+            let mut flags_to_save = interrupt_flags.clone();
+            util::set_bit(&mut flags_to_save, interrupt, false);
+
+            let mut memory = self.memory.borrow_mut();
+            match memory.set(FLAG_IF, flags_to_save) {
+                Ok(_) => (),
+                Err(_) => return Err(Error::InvalidMemoryAccess)
+            }
+
+            self.sp -= 2;
+            memory.set(self.sp + 1, util::get_high_byte(self.pc));
+            memory.set(self.sp, util::get_low_byte(self.pc));
+            self.pc = interrupt_addr;
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 
     fn get_byte_register(&self, reg: &Reg8) -> u8 {
@@ -234,4 +283,7 @@ mod test {
 
         assert_eq!(memory.borrow().get(0x00FF), Ok(0x01 + 0x03));
     }
+
+    #[test]
+    fn interrupts() {}
 }
