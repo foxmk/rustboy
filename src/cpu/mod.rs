@@ -1,13 +1,15 @@
-// mod.rs
-
 use std;
-use std::fmt;
 use std::cell::RefCell;
+use std::fmt;
+use std::ops::RangeInclusive;
 use std::rc::Rc;
 use std::rc::Weak;
 
-use crate::util;
+use crate::cpu::op::*;
 use crate::memory;
+use crate::util;
+
+mod op;
 
 const FLAG_IE: u16 = 0xFFFF;
 const FLAG_IF: u16 = 0xFF0F;
@@ -39,27 +41,27 @@ enum Reg16 { AF, BC, DE, HL, SP, PC }
 #[derive(Debug)]
 enum Flag { Z, N, H, C }
 
-mod op;
-
-use crate::cpu::op::*;
-
 pub struct Cpu {
     pc: u16,
     sp: u16,
     ticks: u32,
     registers: [u16; 4],
     interrupt_enable_master: bool,
+    interrupt_enable_flags: u8,
+    interrupt_request_flags: u8,
     memory: Rc<RefCell<memory::Addressable>>,
 }
 
 impl Cpu {
     pub fn new(memory: Rc<RefCell<memory::Addressable>>) -> Self {
         Self {
-            pc: 0,
-            sp: 0,
+            pc: 0x0000,
+            sp: 0x0000,
             ticks: 0,
             registers: [0; 4],
             interrupt_enable_master: false,
+            interrupt_enable_flags: 0x00,
+            interrupt_request_flags: 0x00,
             memory: memory.clone(),
         }
     }
@@ -237,15 +239,46 @@ impl Cpu {
     }
 }
 
+impl memory::Addressable for Cpu {
+    fn address_ranges(&self) -> Vec<RangeInclusive<u16>> {
+        vec![
+            FLAG_IF..=FLAG_IF,
+            FLAG_IE..=FLAG_IE,
+        ]
+    }
+
+    fn get(&self, address: u16) -> Result<u8, memory::Error> {
+        match address {
+            FLAG_IE => Ok(self.interrupt_enable_flags),
+            FLAG_IF => Ok(self.interrupt_request_flags),
+            other => Err(memory::Error::Unavailable(other)),
+        }
+    }
+
+    fn set(&mut self, address: u16, byte: u8) -> Result<(), memory::Error> {
+        match address {
+            FLAG_IE => {
+                self.interrupt_enable_flags = byte;
+                Ok(())
+            }
+            FLAG_IF => {
+                self.interrupt_request_flags = byte;
+                Ok(())
+            },
+            other => Err(memory::Error::Unavailable(other)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use super::*;
-
     use std::ops::RangeInclusive;
 
     use crate::memory;
     use crate::memory::Addressable;
     use crate::memory::test_util::VecMemory;
+
+    use super::*;
 
     #[test]
     fn should_increment_pc() {
