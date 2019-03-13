@@ -285,18 +285,19 @@ impl memory::Addressable for Cpu {
         }
     }
 
-    fn write(&mut self, address: u16, byte: u8) -> Result<(), memory::Error> {
-        match address {
-            FLAG_IE => {
-                self.interrupt_enable_flags = byte;
-                Ok(())
-            }
-            FLAG_IF => {
-                self.interrupt_request_flags = byte;
-                Ok(())
-            }
-            other => Err(memory::Error::Unavailable(other)),
-        }
+    fn write(&self, address: u16, byte: u8) -> Result<(), memory::Error> {
+//        match address {
+//            FLAG_IE => {
+//                self.interrupt_enable_flags = byte;
+//                Ok(())
+//            }
+//            FLAG_IF => {
+//                self.interrupt_request_flags = byte;
+//                Ok(())
+//            }
+//            other => Err(memory::Error::Unavailable(other)),
+//        }
+        Ok(())
     }
 }
 

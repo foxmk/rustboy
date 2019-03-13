@@ -49,11 +49,11 @@ impl fmt::Display for Error {
 pub trait Addressable {
     fn address_ranges(&self) -> Vec<RangeInclusive<u16>>;
     fn read(&self, address: u16) -> Result<u8, Error>;
-    fn write(&mut self, address: u16, byte: u8) -> Result<(), Error>;
+    fn write(&self, address: u16, byte: u8) -> Result<(), Error>;
 }
 
 pub struct AddressSpace {
-    map: HashMap<RangeInclusive<u16>, Weak<RefCell<dyn Addressable>>>,
+    map: HashMap<RangeInclusive<u16>, Weak<dyn Addressable>>,
 }
 
 impl AddressSpace {
@@ -63,8 +63,8 @@ impl AddressSpace {
         }
     }
 
-    pub fn register_space(&mut self, storage: Rc<RefCell<dyn Addressable>>) {
-        for range in &storage.borrow().address_ranges() {
+    pub fn register_space(&mut self, storage: Rc<dyn Addressable>) {
+        for range in &storage.address_ranges() {
             self.map.insert(range.clone(), Rc::downgrade(&storage));
         }
     }
@@ -80,7 +80,7 @@ impl Addressable for AddressSpace {
             if &addr >= range.start() && &addr <= range.end() {
                 match storage.upgrade() {
                     None => return Err(Error::Unavailable(addr)),
-                    Some(storage) => return storage.borrow().read(addr),
+                    Some(storage) => return storage.read(addr),
                 }
             }
         }
@@ -88,12 +88,12 @@ impl Addressable for AddressSpace {
         return Err(Error::Unavailable(addr));
     }
 
-    fn write(&mut self, addr: u16, byte: u8) -> Result<(), Error> {
+    fn write(&self, addr: u16, byte: u8) -> Result<(), Error> {
         for (range, storage) in &self.map {
             if &addr >= range.start() && &addr <= range.end() {
                 match storage.upgrade() {
                     None => return Err(Error::Unavailable(addr)),
-                    Some(storage) => return storage.borrow_mut().write(addr, byte),
+                    Some(storage) => return storage.write(addr, byte),
                 }
             }
         }
@@ -105,7 +105,7 @@ impl Addressable for AddressSpace {
 #[cfg(test)]
 pub mod test_util {
     use std;
-    use std::cell::RefCell;
+    use std::cell::{RefCell, Ref};
     use std::ops::RangeInclusive;
     use std::rc::Rc;
 
@@ -113,7 +113,7 @@ pub mod test_util {
     use crate::memory::Addressable;
 
     pub struct VecMemory {
-        bytes: Vec<u8>,
+        bytes: RefCell<Vec<u8>>,
         range: RangeInclusive<u16>,
         base_offset: u16,
     }
@@ -127,7 +127,7 @@ pub mod test_util {
             let max_addr = base_offset + bytes.len() as u16 - 1;
             let range = base_offset..=max_addr;
 
-            VecMemory { bytes, range, base_offset }
+            VecMemory { bytes: RefCell::new(bytes), range, base_offset }
         }
     }
 
@@ -139,16 +139,16 @@ pub mod test_util {
         fn read(&self, addr: u16) -> Result<u8, memory::Error> {
             if &addr >= self.range.start() && &addr <= self.range.end() {
                 let i = addr - self.base_offset;
-                Ok(self.bytes[i as usize])
+                Ok(self.bytes.borrow()[i as usize])
             } else {
                 Err(memory::Error::OutOfBounds)
             }
         }
 
-        fn write(&mut self, addr: u16, byte: u8) -> Result<(), memory::Error> {
+        fn write(&self, addr: u16, byte: u8) -> Result<(), memory::Error> {
             if &addr >= self.range.start() && &addr <= self.range.end() {
                 let i = addr - self.base_offset;
-                self.bytes[i as usize] = byte;
+                self.bytes.borrow_mut()[i as usize] = byte;
                 Ok(())
             } else {
                 Err(memory::Error::OutOfBounds)
@@ -175,18 +175,18 @@ mod test {
     fn register_space() {
         let mut space = AddressSpace::new();
 
-        let memory: Rc<RefCell<dyn Addressable>> = Rc::new(RefCell::new(VecMemory::new(vec![0xFF])));
+        let memory = Rc::new(VecMemory::new(vec![0xFF]));
         space.register_space(memory.clone());
 
-        assert_eq!(space.read(0x0000), memory.borrow().read(0x0000));
+        assert_eq!(space.read(0x0000), memory.read(0x0000));
     }
 
     #[test]
     fn out_of_bounds() {
         let mut space = AddressSpace::new();
 
-        let memory: Rc<RefCell<dyn Addressable>> = Rc::new(RefCell::new(VecMemory::new(vec![0xFF])));
-        space.register_space(memory);
+        let memory = Rc::new(VecMemory::new(vec![0xFF]));
+        space.register_space(memory.clone());
 
         assert_eq!(space.read(0x0001), Err(Error::Unavailable(0x0001)));
     }
@@ -195,11 +195,11 @@ mod test {
     fn write_byte() {
         let mut space = AddressSpace::new();
 
-        let memory: Rc<RefCell<dyn Addressable>> = Rc::new(RefCell::new(VecMemory::new(vec![0x00; 0x00FF - 1])));
+        let memory = Rc::new(VecMemory::new(vec![0x00; 0x00FF - 1]));
         space.register_space(memory.clone());
 
         space.write(0x0020, 0xFF);
-        assert_eq!(memory.borrow().read(0x0020), Ok(0xFF));
+        assert_eq!(memory.read(0x0020), Ok(0xFF));
         assert_eq!(space.read(0x0020), Ok(0xFF));
     }
 
@@ -207,18 +207,18 @@ mod test {
     fn multiple_storage() {
         let mut space = AddressSpace::new();
 
-        let memory_one: Rc<RefCell<dyn Addressable>> = Rc::new(RefCell::new(VecMemory::new_offset(vec![0x00; 0x00FF + 1], 0x0000)));
+        let memory_one = Rc::new(VecMemory::new_offset(vec![0x00; 0x00FF + 1], 0x0000));
         space.register_space(memory_one.clone());
 
-        let memory_two: Rc<RefCell<dyn Addressable>> = Rc::new(RefCell::new(VecMemory::new_offset(vec![0x00; 0x00FF + 1], 0x0100)));
+        let memory_two = Rc::new(VecMemory::new_offset(vec![0x00; 0x00FF + 1], 0x0100));
         space.register_space(memory_two.clone());
 
         space.write(0x0020, 0xFF);
-        assert_eq!(memory_one.borrow().read(0x0020), Ok(0xFF));
+        assert_eq!(memory_one.read(0x0020), Ok(0xFF));
         assert_eq!(space.read(0x0020), Ok(0xFF));
 
         space.write(0x0120, 0xFE);
-        assert_eq!(memory_two.borrow().read(0x0120), Ok(0xFE));
+        assert_eq!(memory_two.read(0x0120), Ok(0xFE));
         assert_eq!(space.read(0x0120), Ok(0xFE));
     }
 }
