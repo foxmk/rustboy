@@ -49,11 +49,11 @@ impl fmt::Display for Error {
 pub trait Addressable {
     fn address_ranges(&self) -> Vec<RangeInclusive<u16>>;
     fn read(&self, address: u16) -> Result<u8, Error>;
-    fn write(&self, address: u16, byte: u8) -> Result<(), Error>;
+    fn write(&mut self, address: u16, byte: u8) -> Result<(), Error>;
 }
 
 pub struct AddressSpace {
-    map: HashMap<RangeInclusive<u16>, Rc<dyn Addressable>>,
+    map: HashMap<RangeInclusive<u16>, Rc<RefCell<dyn Addressable>>>,
 }
 
 impl AddressSpace {
@@ -63,8 +63,8 @@ impl AddressSpace {
         }
     }
 
-    pub fn register_space(&mut self, storage: Rc<dyn Addressable>) {
-        for range in &storage.address_ranges() {
+    pub fn register_space(&mut self, storage: Rc<RefCell<dyn Addressable>>) {
+        for range in &storage.borrow().address_ranges() {
             self.map.insert(range.clone(), storage.clone());
         }
     }
@@ -78,17 +78,17 @@ impl Addressable for AddressSpace {
     fn read(&self, addr: u16) -> Result<u8, Error> {
         for (range, storage) in &self.map {
             if &addr >= range.start() && &addr <= range.end() {
-                return storage.read(addr);
+                return storage.borrow().read(addr);
             }
         }
 
         return Err(Error::Unavailable(addr));
     }
 
-    fn write(&self, addr: u16, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, addr: u16, byte: u8) -> Result<(), Error> {
         for (range, storage) in &self.map {
             if &addr >= range.start() && &addr <= range.end() {
-                return storage.write(addr, byte);
+                return storage.borrow_mut().write(addr, byte);
             }
         }
 
@@ -139,7 +139,7 @@ pub mod test_util {
             }
         }
 
-        fn write(&self, addr: u16, byte: u8) -> Result<(), memory::Error> {
+        fn write(&mut self, addr: u16, byte: u8) -> Result<(), memory::Error> {
             if &addr >= self.range.start() && &addr <= self.range.end() {
                 let i = addr - self.base_offset;
                 self.bytes.borrow_mut()[i as usize] = byte;
@@ -169,17 +169,17 @@ mod test {
     fn register_space() {
         let mut space = AddressSpace::new();
 
-        let memory = Rc::new(VecMemory::new(vec![0xFF]));
+        let memory = Rc::new(RefCell::new(VecMemory::new(vec![0xFF])));
         space.register_space(memory.clone());
 
-        assert_eq!(space.read(0x0000), memory.read(0x0000));
+        assert_eq!(space.read(0x0000), memory.borrow().read(0x0000));
     }
 
     #[test]
     fn out_of_bounds() {
         let mut space = AddressSpace::new();
 
-        let memory = Rc::new(VecMemory::new(vec![0xFF]));
+        let memory = Rc::new(RefCell::new(VecMemory::new(vec![0xFF])));
         space.register_space(memory.clone());
 
         assert_eq!(space.read(0x0001), Err(Error::Unavailable(0x0001)));
@@ -189,11 +189,11 @@ mod test {
     fn write_byte() {
         let mut space = AddressSpace::new();
 
-        let memory = Rc::new(VecMemory::new(vec![0x00; 0x00FF - 1]));
+        let memory = Rc::new(RefCell::new(VecMemory::new(vec![0x00; 0x00FF - 1])));
         space.register_space(memory.clone());
 
         space.write(0x0020, 0xFF);
-        assert_eq!(memory.read(0x0020), Ok(0xFF));
+        assert_eq!(memory.borrow().read(0x0020), Ok(0xFF));
         assert_eq!(space.read(0x0020), Ok(0xFF));
     }
 
@@ -201,18 +201,18 @@ mod test {
     fn multiple_storage() {
         let mut space = AddressSpace::new();
 
-        let memory_one = Rc::new(VecMemory::new_offset(vec![0x00; 0x00FF + 1], 0x0000));
+        let memory_one = Rc::new(RefCell::new(VecMemory::new_offset(vec![0x00; 0x00FF + 1], 0x0000)));
         space.register_space(memory_one.clone());
 
-        let memory_two = Rc::new(VecMemory::new_offset(vec![0x00; 0x00FF + 1], 0x0100));
+        let memory_two = Rc::new(RefCell::new(VecMemory::new_offset(vec![0x00; 0x00FF + 1], 0x0100)));
         space.register_space(memory_two.clone());
 
         space.write(0x0020, 0xFF);
-        assert_eq!(memory_one.read(0x0020), Ok(0xFF));
+        assert_eq!(memory_one.borrow().read(0x0020), Ok(0xFF));
         assert_eq!(space.read(0x0020), Ok(0xFF));
 
         space.write(0x0120, 0xFE);
-        assert_eq!(memory_two.read(0x0120), Ok(0xFE));
+        assert_eq!(memory_two.borrow().read(0x0120), Ok(0xFE));
         assert_eq!(space.read(0x0120), Ok(0xFE));
     }
 }

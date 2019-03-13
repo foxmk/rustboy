@@ -69,7 +69,7 @@ impl memory::Addressable for Gpu {
         unimplemented!()
     }
 
-    fn write(&self, address: u16, byte: u8) -> Result<(), memory::Error> {
+    fn write(&mut self, address: u16, byte: u8) -> Result<(), memory::Error> {
         unimplemented!()
     }
 }

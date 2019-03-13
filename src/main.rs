@@ -9,6 +9,7 @@ mod cpu;
 mod memory;
 mod util;
 mod video;
+mod ops;
 
 const WIDTH: usize = 160;
 const HEIGHT: usize = 144;
