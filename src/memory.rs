@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::ops::RangeInclusive;
 use std::rc::Weak;
+use std::rc::Rc;
 
 pub mod constants {
     const ROM_FIXED_START: u16 = 0x0000;
@@ -47,8 +48,8 @@ impl fmt::Display for Error {
 
 pub trait Addressable {
     fn address_ranges(&self) -> Vec<RangeInclusive<u16>>;
-    fn get(&self, address: u16) -> Result<u8, Error>;
-    fn set(&mut self, address: u16, byte: u8) -> Result<(), Error>;
+    fn read(&self, address: u16) -> Result<u8, Error>;
+    fn write(&mut self, address: u16, byte: u8) -> Result<(), Error>;
 }
 
 pub struct AddressSpace {
@@ -62,15 +63,9 @@ impl AddressSpace {
         }
     }
 
-    pub fn register_space(&mut self, storage: Weak<RefCell<dyn Addressable>>) -> Result<(), Error> {
-        match storage.upgrade() {
-            Some(s) => {
-                s.borrow().address_ranges().into_iter().for_each(|range| {
-                    self.map.insert(range, storage.clone());
-                });
-                Ok(())
-            }
-            None => Err(Error::OutOfBounds),
+    pub fn register_space(&mut self, storage: Rc<RefCell<dyn Addressable>>) {
+        for range in &storage.borrow().address_ranges() {
+            self.map.insert(range.clone(), Rc::downgrade(&storage));
         }
     }
 }
@@ -80,12 +75,12 @@ impl Addressable for AddressSpace {
         vec![0x0000..=std::u16::MAX]
     }
 
-    fn get(&self, addr: u16) -> Result<u8, Error> {
+    fn read(&self, addr: u16) -> Result<u8, Error> {
         for (range, storage) in &self.map {
             if &addr >= range.start() && &addr <= range.end() {
                 match storage.upgrade() {
                     None => return Err(Error::Unavailable(addr)),
-                    Some(storage) => return storage.borrow().get(addr),
+                    Some(storage) => return storage.borrow().read(addr),
                 }
             }
         }
@@ -93,12 +88,12 @@ impl Addressable for AddressSpace {
         return Err(Error::Unavailable(addr));
     }
 
-    fn set(&mut self, addr: u16, byte: u8) -> Result<(), Error> {
+    fn write(&mut self, addr: u16, byte: u8) -> Result<(), Error> {
         for (range, storage) in &self.map {
             if &addr >= range.start() && &addr <= range.end() {
                 match storage.upgrade() {
                     None => return Err(Error::Unavailable(addr)),
-                    Some(storage) => return storage.borrow_mut().set(addr, byte),
+                    Some(storage) => return storage.borrow_mut().write(addr, byte),
                 }
             }
         }
@@ -118,18 +113,21 @@ pub mod test_util {
     use crate::memory::Addressable;
 
     pub struct VecMemory {
-        vec: Vec<u8>,
+        bytes: Vec<u8>,
         range: RangeInclusive<u16>,
+        base_offset: u16,
     }
 
     impl VecMemory {
-        pub fn new_ref(bytes: Vec<u8>) -> Rc<RefCell<Self>> {
-            let end_addr = (bytes.len() as u16) - 1;
-            VecMemory::new_ref_ranged(bytes, 0x0000..=end_addr)
+        pub fn new(bytes: Vec<u8>) -> Self {
+            Self::new_offset(bytes, 0x0000)
         }
 
-        pub fn new_ref_ranged(vec: Vec<u8>, range: RangeInclusive<u16>) -> Rc<RefCell<Self>> {
-            Rc::new(RefCell::new(VecMemory { vec, range }))
+        pub fn new_offset(bytes: Vec<u8>, base_offset: u16) -> Self {
+            let max_addr = base_offset + bytes.len() as u16 - 1;
+            let range = base_offset..=max_addr;
+
+            VecMemory { bytes, range, base_offset }
         }
     }
 
@@ -138,30 +136,19 @@ pub mod test_util {
             vec![self.range.clone()]
         }
 
-        fn get(&self, addr: u16) -> Result<u8, memory::Error> {
+        fn read(&self, addr: u16) -> Result<u8, memory::Error> {
             if &addr >= self.range.start() && &addr <= self.range.end() {
-                match self.vec.get(addr as usize) {
-                    None => Ok(0x00),
-                    Some(i) => Ok(*i),
-                }
+                let i = addr - self.base_offset;
+                Ok(self.bytes[i as usize])
             } else {
                 Err(memory::Error::OutOfBounds)
             }
         }
 
-        fn set(&mut self, addr: u16, byte: u8) -> Result<(), memory::Error> {
+        fn write(&mut self, addr: u16, byte: u8) -> Result<(), memory::Error> {
             if &addr >= self.range.start() && &addr <= self.range.end() {
-                match self.vec.get_mut(addr as usize) {
-                    Some(i) => *i = byte,
-                    None => {
-                        self.vec.resize(addr as usize + 1, 0x00);
-                        match self.vec.get_mut(addr as usize) {
-                            None => unreachable!(),
-                            Some(i) => *i = byte,
-                        }
-                    }
-                }
-
+                let i = addr - self.base_offset;
+                self.bytes[i as usize] = byte;
                 Ok(())
             } else {
                 Err(memory::Error::OutOfBounds)
@@ -176,63 +163,62 @@ mod test {
 
     use super::test_util::*;
     use super::*;
+    use std::ops::{Range, Add};
 
     #[test]
     fn empty_space() {
         let space = AddressSpace::new();
-        assert_eq!(space.get(0x0000), Err(Error::Unavailable(0x0000)))
+        assert_eq!(space.read(0x0000), Err(Error::Unavailable(0x0000)))
     }
 
     #[test]
     fn register_space() {
         let mut space = AddressSpace::new();
 
-        let memory: Rc<RefCell<Addressable>> = VecMemory::new_ref(vec![0xFF]);
-        space.register_space(Rc::downgrade(&memory));
+        let memory: Rc<RefCell<dyn Addressable>> = Rc::new(RefCell::new(VecMemory::new(vec![0xFF])));
+        space.register_space(memory.clone());
 
-        assert_eq!(space.get(0x0000), memory.borrow().get(0x0000));
+        assert_eq!(space.read(0x0000), memory.borrow().read(0x0000));
     }
 
     #[test]
     fn out_of_bounds() {
         let mut space = AddressSpace::new();
 
-        let memory: Rc<RefCell<Addressable>> = VecMemory::new_ref(vec![0xFF]);
-        space.register_space(Rc::downgrade(&memory));
+        let memory: Rc<RefCell<dyn Addressable>> = Rc::new(RefCell::new(VecMemory::new(vec![0xFF])));
+        space.register_space(memory);
 
-        assert_eq!(space.get(0x0001), Err(Error::Unavailable(0x0001)));
+        assert_eq!(space.read(0x0001), Err(Error::Unavailable(0x0001)));
     }
 
     #[test]
     fn write_byte() {
         let mut space = AddressSpace::new();
 
-        let memory: Rc<RefCell<Addressable>> = VecMemory::new_ref_ranged(vec![], 0x0000..=0x00FF);
-        space.register_space(Rc::downgrade(&memory));
+        let memory: Rc<RefCell<dyn Addressable>> = Rc::new(RefCell::new(VecMemory::new(vec![0x00; 0x00FF - 1])));
+        space.register_space(memory.clone());
 
-        space.set(0x0020, 0xFF);
-        assert_eq!(memory.borrow().get(0x0020), Ok(0xFF));
-        assert_eq!(space.get(0x0020), Ok(0xFF));
+        space.write(0x0020, 0xFF);
+        assert_eq!(memory.borrow().read(0x0020), Ok(0xFF));
+        assert_eq!(space.read(0x0020), Ok(0xFF));
     }
 
     #[test]
     fn multiple_storage() {
         let mut space = AddressSpace::new();
 
-        let memory_one: Rc<RefCell<Addressable>> =
-            VecMemory::new_ref_ranged(vec![], 0x0000..=0x00FF);
-        space.register_space(Rc::downgrade(&memory_one));
+        let memory_one: Rc<RefCell<dyn Addressable>> = Rc::new(RefCell::new(VecMemory::new_offset(vec![0x00; 0x00FF + 1], 0x0000)));
+        space.register_space(memory_one.clone());
 
-        let memory_two: Rc<RefCell<Addressable>> =
-            VecMemory::new_ref_ranged(vec![], 0x0100..=0x01FF);
-        space.register_space(Rc::downgrade(&memory_two));
+        let memory_two: Rc<RefCell<dyn Addressable>> = Rc::new(RefCell::new(VecMemory::new_offset(vec![0x00; 0x00FF + 1], 0x0100)));
+        space.register_space(memory_two.clone());
 
-        space.set(0x0020, 0xFF);
-        assert_eq!(memory_one.borrow().get(0x0020), Ok(0xFF));
-        assert_eq!(space.get(0x0020), Ok(0xFF));
+        space.write(0x0020, 0xFF);
+        assert_eq!(memory_one.borrow().read(0x0020), Ok(0xFF));
+        assert_eq!(space.read(0x0020), Ok(0xFF));
 
-        space.set(0x0120, 0xFE);
-        assert_eq!(memory_two.borrow().get(0x0120), Ok(0xFE));
-        assert_eq!(space.get(0x0120), Ok(0xFE));
+        space.write(0x0120, 0xFE);
+        assert_eq!(memory_two.borrow().read(0x0120), Ok(0xFE));
+        assert_eq!(space.read(0x0120), Ok(0xFE));
     }
 }

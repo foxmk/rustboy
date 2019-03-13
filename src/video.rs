@@ -65,11 +65,11 @@ impl memory::Addressable for Gpu {
         ]
     }
 
-    fn get(&self, address: u16) -> Result<u8, memory::Error> {
+    fn read(&self, address: u16) -> Result<u8, memory::Error> {
         unimplemented!()
     }
 
-    fn set(&mut self, address: u16, byte: u8) -> Result<(), memory::Error> {
+    fn write(&mut self, address: u16, byte: u8) -> Result<(), memory::Error> {
         unimplemented!()
     }
 }

@@ -368,7 +368,7 @@ impl Op {
             Op::LoadInd(dest, src) => {
                 let src_addr = cpu.get_word_register(src);
 
-                let byte = match cpu.memory.borrow().get(src_addr) {
+                let byte = match cpu.memory.borrow().read(src_addr) {
                     Ok(byte) => byte,
                     Err(_) => return Err(Error::InvalidMemoryAccess),
                 };
@@ -377,7 +377,7 @@ impl Op {
                 Ok(true)
             }
             Op::LoadIndAImm(src_addr) => {
-                let byte = match cpu.memory.borrow().get(*src_addr) {
+                let byte = match cpu.memory.borrow().read(*src_addr) {
                     Ok(byte) => byte,
                     Err(_) => return Err(Error::InvalidMemoryAccess),
                 };
@@ -388,21 +388,21 @@ impl Op {
             Op::StoreInd(dest, src) => {
                 let dest_addr = cpu.get_word_register(dest);
                 let byte = cpu.get_byte_register(src);
-                match cpu.memory.borrow_mut().set(dest_addr, byte) {
+                match cpu.memory.borrow_mut().write(dest_addr, byte) {
                     Ok(_) => Ok(true),
                     Err(_) => Err(Error::InvalidMemoryAccess),
                 }
             }
             Op::StoreImmediate(byte) => {
                 let dest_addr = cpu.get_word_register(&Reg16::HL);
-                match cpu.memory.borrow_mut().set(dest_addr, *byte) {
+                match cpu.memory.borrow_mut().write(dest_addr, *byte) {
                     Ok(_) => Ok(true),
                     Err(_) => Err(Error::InvalidMemoryAccess),
                 }
             }
             Op::StoreIndAImmediate(dest_addr) => {
                 let byte = cpu.get_byte_register(&Reg8::A);
-                match cpu.memory.borrow_mut().set(*dest_addr, byte) {
+                match cpu.memory.borrow_mut().write(*dest_addr, byte) {
                     Ok(_) => Ok(true),
                     Err(_) => Err(Error::InvalidMemoryAccess),
                 }
@@ -410,7 +410,7 @@ impl Op {
             Op::LoadIO(offset) => {
                 let src_addr = 0xFF00 + (*offset as u16);
 
-                let byte = match cpu.memory.borrow().get(src_addr) {
+                let byte = match cpu.memory.borrow().read(src_addr) {
                     Ok(byte) => byte,
                     Err(_) => return Err(Error::InvalidMemoryAccess),
                 };
@@ -422,7 +422,7 @@ impl Op {
                 let dest_addr = 0xFF00 + (*offset as u16);
                 let byte = cpu.get_byte_register(&Reg8::A);
 
-                match cpu.memory.borrow_mut().set(dest_addr, byte) {
+                match cpu.memory.borrow_mut().write(dest_addr, byte) {
                     Ok(_) => Ok(true),
                     Err(_) => Err(Error::InvalidMemoryAccess),
                 }
@@ -430,7 +430,7 @@ impl Op {
             Op::LoadIOC => {
                 let src_addr = 0xFF00 + (cpu.get_byte_register(&Reg8::C) as u16);
 
-                let byte = match cpu.memory.borrow().get(src_addr) {
+                let byte = match cpu.memory.borrow().read(src_addr) {
                     Ok(byte) => byte,
                     Err(_) => return Err(Error::InvalidMemoryAccess),
                 };
@@ -442,7 +442,7 @@ impl Op {
                 let dest_addr = 0xFF00 + (cpu.get_byte_register(&Reg8::C) as u16);
                 let byte = cpu.get_byte_register(&Reg8::A);
 
-                match cpu.memory.borrow_mut().set(dest_addr, byte) {
+                match cpu.memory.borrow_mut().write(dest_addr, byte) {
                     Ok(_) => Ok(true),
                     Err(_) => Err(Error::InvalidMemoryAccess),
                 }
@@ -450,7 +450,7 @@ impl Op {
             Op::LoadInc => {
                 let src_addr = cpu.get_word_register(&Reg16::HL);
 
-                let byte = match cpu.memory.borrow().get(src_addr) {
+                let byte = match cpu.memory.borrow().read(src_addr) {
                     Ok(byte) => byte,
                     Err(_) => return Err(Error::InvalidMemoryAccess),
                 };
@@ -463,7 +463,7 @@ impl Op {
                 let dest_addr = cpu.get_word_register(&Reg16::HL);
                 let byte = cpu.get_byte_register(&Reg8::A);
 
-                match cpu.memory.borrow_mut().set(dest_addr, byte) {
+                match cpu.memory.borrow_mut().write(dest_addr, byte) {
                     Ok(_) => {}
                     Err(_) => return Err(Error::InvalidMemoryAccess),
                 }
@@ -474,7 +474,7 @@ impl Op {
             Op::LoadDec => {
                 let src_addr = cpu.get_word_register(&Reg16::HL);
 
-                let byte = match cpu.memory.borrow().get(src_addr) {
+                let byte = match cpu.memory.borrow().read(src_addr) {
                     Ok(byte) => byte,
                     Err(_) => return Err(Error::InvalidMemoryAccess),
                 };
@@ -487,7 +487,7 @@ impl Op {
                 let dest_addr = cpu.get_word_register(&Reg16::HL);
                 let byte = cpu.get_byte_register(&Reg8::A);
 
-                match cpu.memory.borrow_mut().set(dest_addr, byte) {
+                match cpu.memory.borrow_mut().write(dest_addr, byte) {
                     Ok(_) => {}
                     Err(_) => return Err(Error::InvalidMemoryAccess),
                 }

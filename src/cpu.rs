@@ -80,16 +80,16 @@ impl Cpu {
         };
 
         #[cfg(test)]
-        {
-            println!("Exec op: {}", op)
-        }
+            {
+                println!("Exec op: {}", op)
+            }
 
         op.exec(self)
         //        self.process_interrupts()
     }
 
     fn fetch(&mut self) -> Result<u8, Error> {
-        let byte = match self.memory.borrow().get(self.pc) {
+        let byte = match self.memory.borrow().read(self.pc) {
             Ok(byte) => byte,
             Err(_) => return Err(Error::InvalidMemoryAccess),
         };
@@ -100,12 +100,12 @@ impl Cpu {
 
     fn process_interrupts(&mut self) -> Result<bool, Error> {
         if self.interrupt_enable_master {
-            let interrupt_enable_flags = match self.memory.borrow().get(FLAG_IE) {
+            let interrupt_enable_flags = match self.memory.borrow().read(FLAG_IE) {
                 Ok(byte) => byte,
                 Err(_) => return Err(Error::InvalidMemoryAccess),
             };
 
-            let interrupt_flags = match self.memory.borrow().get(FLAG_IF) {
+            let interrupt_flags = match self.memory.borrow().read(FLAG_IF) {
                 Ok(byte) => byte,
                 Err(_) => return Err(Error::InvalidMemoryAccess),
             };
@@ -176,14 +176,14 @@ impl Cpu {
             util::set_bit(&mut flags_to_save, interrupt, false);
 
             let mut memory = self.memory.borrow_mut();
-            match memory.set(FLAG_IF, flags_to_save) {
+            match memory.write(FLAG_IF, flags_to_save) {
                 Ok(_) => (),
                 Err(_) => return Err(Error::InvalidMemoryAccess),
             }
 
             self.sp -= 2;
-            memory.set(self.sp + 1, util::get_high_byte(self.pc));
-            memory.set(self.sp, util::get_low_byte(self.pc));
+            memory.write(self.sp + 1, util::get_high_byte(self.pc));
+            memory.write(self.sp, util::get_low_byte(self.pc));
             self.pc = interrupt_addr;
             return Ok(true);
         }
@@ -277,7 +277,7 @@ impl memory::Addressable for Cpu {
         vec![FLAG_IF..=FLAG_IF, FLAG_IE..=FLAG_IE]
     }
 
-    fn get(&self, address: u16) -> Result<u8, memory::Error> {
+    fn read(&self, address: u16) -> Result<u8, memory::Error> {
         match address {
             FLAG_IE => Ok(self.interrupt_enable_flags),
             FLAG_IF => Ok(self.interrupt_request_flags),
@@ -285,7 +285,7 @@ impl memory::Addressable for Cpu {
         }
     }
 
-    fn set(&mut self, address: u16, byte: u8) -> Result<(), memory::Error> {
+    fn write(&mut self, address: u16, byte: u8) -> Result<(), memory::Error> {
         match address {
             FLAG_IE => {
                 self.interrupt_enable_flags = byte;
@@ -312,7 +312,7 @@ mod test {
 
     #[test]
     fn should_increment_pc() {
-        let memory = VecMemory::new_ref(compile(vec![Op::Nop, Op::Halt]));
+        let memory = Rc::new(RefCell::new(VecMemory::new(compile(vec![Op::Nop, Op::Halt]))));
 
         let mut cpu = Cpu::new(memory.clone());
         assert_eq!(cpu.pc, 0, "PC should be 0");
@@ -323,17 +323,19 @@ mod test {
 
     #[test]
     fn simple_addition() {
-        let memory = VecMemory::new_ref_ranged(
-            compile(vec![
+        let memory = {
+            let mut a = compile(vec![
                 Op::LoadImm(Reg8::A, 0x01),
                 Op::LoadImm(Reg8::B, 0x03),
                 Op::Load16(Reg16::HL, 0x00FF),
                 Op::Add(Reg8::B),
                 Op::StoreInd(Reg16::HL, Reg8::A),
                 Op::Halt,
-            ]),
-            0x0000..=0x0100,
-        );
+            ]);
+
+            a.resize(0x0100 + 1, 0x00);
+            Rc::new(RefCell::new(VecMemory::new(a)))
+        };
 
         let mut cpu = Cpu::new(memory.clone());
         loop {
@@ -344,7 +346,7 @@ mod test {
             }
         }
 
-        assert_eq!(memory.borrow().get(0x00FF), Ok(0x01 + 0x03));
+        assert_eq!(memory.as_ref().borrow().read(0x00FF), Ok(0x01 + 0x03));
     }
 
     #[test]
