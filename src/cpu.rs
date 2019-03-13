@@ -80,18 +80,18 @@ impl Cpu {
         };
 
         #[cfg(test)]
-            {
-                println!("Exec op: {}", op)
-            }
+        {
+            println!("Exec op: {}", op)
+        }
 
         op.exec(self)
-//        self.process_interrupts()
+        //        self.process_interrupts()
     }
 
     fn fetch(&mut self) -> Result<u8, Error> {
         let byte = match self.memory.borrow().get(self.pc) {
             Ok(byte) => byte,
-            Err(_) => return Err(Error::InvalidMemoryAccess)
+            Err(_) => return Err(Error::InvalidMemoryAccess),
         };
 
         self.pc += 1;
@@ -102,31 +102,56 @@ impl Cpu {
         if self.interrupt_enable_master {
             let interrupt_enable_flags = match self.memory.borrow().get(FLAG_IE) {
                 Ok(byte) => byte,
-                Err(_) => return Err(Error::InvalidMemoryAccess)
+                Err(_) => return Err(Error::InvalidMemoryAccess),
             };
 
             let interrupt_flags = match self.memory.borrow().get(FLAG_IF) {
                 Ok(byte) => byte,
-                Err(_) => return Err(Error::InvalidMemoryAccess)
+                Err(_) => return Err(Error::InvalidMemoryAccess),
             };
 
-            match self.process_interrupt_if_requested_and_allowed(interrupt_enable_flags, interrupt_flags, INT_VBLANK, INT_VBLANK_ADDR) {
+            match self.process_interrupt_if_requested_and_allowed(
+                interrupt_enable_flags,
+                interrupt_flags,
+                INT_VBLANK,
+                INT_VBLANK_ADDR,
+            ) {
                 Ok(false) => (),
                 other => return other,
             }
-            match self.process_interrupt_if_requested_and_allowed(interrupt_enable_flags, interrupt_flags, INT_LCD_STAT, INT_LCD_STAT_ADDR) {
+            match self.process_interrupt_if_requested_and_allowed(
+                interrupt_enable_flags,
+                interrupt_flags,
+                INT_LCD_STAT,
+                INT_LCD_STAT_ADDR,
+            ) {
                 Ok(false) => (),
                 other => return other,
             }
-            match self.process_interrupt_if_requested_and_allowed(interrupt_enable_flags, interrupt_flags, INT_TIMER, INT_TIMER_ADDR) {
+            match self.process_interrupt_if_requested_and_allowed(
+                interrupt_enable_flags,
+                interrupt_flags,
+                INT_TIMER,
+                INT_TIMER_ADDR,
+            ) {
                 Ok(false) => (),
                 other => return other,
             }
-            match self.process_interrupt_if_requested_and_allowed(interrupt_enable_flags, interrupt_flags, INT_SERIAL, INT_SERIAL_ADDR) {
+            match self.process_interrupt_if_requested_and_allowed(
+                interrupt_enable_flags,
+                interrupt_flags,
+                INT_SERIAL,
+                INT_SERIAL_ADDR,
+            ) {
                 Ok(false) => (),
                 other => return other,
             }
-            match self.process_interrupt_if_requested_and_allowed(interrupt_enable_flags, interrupt_flags, INT_JOYSTICK, INT_JOYSTICK_ADDR) {
+            match self.process_interrupt_if_requested_and_allowed(
+                interrupt_enable_flags,
+                interrupt_flags,
+                INT_JOYSTICK,
+                INT_JOYSTICK_ADDR,
+            ) {
                 Ok(false) => (),
                 other => return other,
             }
@@ -135,8 +160,16 @@ impl Cpu {
         Ok(true)
     }
 
-    fn process_interrupt_if_requested_and_allowed(&mut self, interrupt_enable_flags: u8, interrupt_flags: u8, interrupt: u8, interrupt_addr: u16) -> Result<bool, Error> {
-        if util::get_bit(interrupt_enable_flags, interrupt) && util::get_bit(interrupt_flags, interrupt) {
+    fn process_interrupt_if_requested_and_allowed(
+        &mut self,
+        interrupt_enable_flags: u8,
+        interrupt_flags: u8,
+        interrupt: u8,
+        interrupt_addr: u16,
+    ) -> Result<bool, Error> {
+        if util::get_bit(interrupt_enable_flags, interrupt)
+            && util::get_bit(interrupt_flags, interrupt)
+        {
             self.interrupt_enable_master = false;
 
             let mut flags_to_save = interrupt_flags.clone();
@@ -145,7 +178,7 @@ impl Cpu {
             let mut memory = self.memory.borrow_mut();
             match memory.set(FLAG_IF, flags_to_save) {
                 Ok(_) => (),
-                Err(_) => return Err(Error::InvalidMemoryAccess)
+                Err(_) => return Err(Error::InvalidMemoryAccess),
             }
 
             self.sp -= 2;
@@ -241,10 +274,7 @@ impl Cpu {
 
 impl memory::Addressable for Cpu {
     fn address_ranges(&self) -> Vec<RangeInclusive<u16>> {
-        vec![
-            FLAG_IF..=FLAG_IF,
-            FLAG_IE..=FLAG_IE,
-        ]
+        vec![FLAG_IF..=FLAG_IF, FLAG_IE..=FLAG_IE]
     }
 
     fn get(&self, address: u16) -> Result<u8, memory::Error> {
@@ -264,7 +294,7 @@ impl memory::Addressable for Cpu {
             FLAG_IF => {
                 self.interrupt_request_flags = byte;
                 Ok(())
-            },
+            }
             other => Err(memory::Error::Unavailable(other)),
         }
     }
@@ -275,17 +305,14 @@ mod test {
     use std::ops::RangeInclusive;
 
     use crate::memory;
-    use crate::memory::Addressable;
     use crate::memory::test_util::VecMemory;
+    use crate::memory::Addressable;
 
     use super::*;
 
     #[test]
     fn should_increment_pc() {
-        let memory = VecMemory::new_ref(compile(vec![
-            Op::Nop,
-            Op::Halt,
-        ]));
+        let memory = VecMemory::new_ref(compile(vec![Op::Nop, Op::Halt]));
 
         let mut cpu = Cpu::new(memory.clone());
         assert_eq!(cpu.pc, 0, "PC should be 0");
@@ -296,21 +323,24 @@ mod test {
 
     #[test]
     fn simple_addition() {
-        let memory = VecMemory::new_ref_ranged(compile(vec![
-            Op::LoadImm(Reg8::A, 0x01),
-            Op::LoadImm(Reg8::B, 0x03),
-            Op::Load16(Reg16::HL, 0x00FF),
-            Op::Add(Reg8::B),
-            Op::StoreInd(Reg16::HL, Reg8::A),
-            Op::Halt,
-        ]), 0x0000..=0x0100);
+        let memory = VecMemory::new_ref_ranged(
+            compile(vec![
+                Op::LoadImm(Reg8::A, 0x01),
+                Op::LoadImm(Reg8::B, 0x03),
+                Op::Load16(Reg16::HL, 0x00FF),
+                Op::Add(Reg8::B),
+                Op::StoreInd(Reg16::HL, Reg8::A),
+                Op::Halt,
+            ]),
+            0x0000..=0x0100,
+        );
 
         let mut cpu = Cpu::new(memory.clone());
         loop {
             match cpu.step() {
                 Ok(true) => continue,
                 Ok(false) => break,
-                Err(err) => panic!("{:?}", err)
+                Err(err) => panic!("{:?}", err),
             }
         }
 

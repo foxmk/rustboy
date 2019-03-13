@@ -2,10 +2,10 @@
 
 use std;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::ops::RangeInclusive;
 use std::rc::Weak;
-use std::collections::HashMap;
 
 pub mod constants {
     const ROM_FIXED_START: u16 = 0x0000;
@@ -52,7 +52,7 @@ pub trait Addressable {
 }
 
 pub struct AddressSpace {
-    map: HashMap<RangeInclusive<u16>, Weak<RefCell<dyn Addressable>>>
+    map: HashMap<RangeInclusive<u16>, Weak<RefCell<dyn Addressable>>>,
 }
 
 impl AddressSpace {
@@ -70,7 +70,7 @@ impl AddressSpace {
                 });
                 Ok(())
             }
-            None => Err(Error::OutOfBounds)
+            None => Err(Error::OutOfBounds),
         }
     }
 }
@@ -88,7 +88,7 @@ impl Addressable for AddressSpace {
                     Some(storage) => return storage.borrow().get(addr),
                 }
             }
-        };
+        }
 
         return Err(Error::Unavailable(addr));
     }
@@ -101,7 +101,7 @@ impl Addressable for AddressSpace {
                     Some(storage) => return storage.borrow_mut().set(addr, byte),
                 }
             }
-        };
+        }
 
         return Err(Error::Unavailable(addr));
     }
@@ -129,10 +129,7 @@ pub mod test_util {
         }
 
         pub fn new_ref_ranged(vec: Vec<u8>, range: RangeInclusive<u16>) -> Rc<RefCell<Self>> {
-            Rc::new(RefCell::new(VecMemory {
-                vec,
-                range,
-            }))
+            Rc::new(RefCell::new(VecMemory { vec, range }))
         }
     }
 
@@ -145,7 +142,7 @@ pub mod test_util {
             if &addr >= self.range.start() && &addr <= self.range.end() {
                 match self.vec.get(addr as usize) {
                     None => Ok(0x00),
-                    Some(i) => Ok(*i)
+                    Some(i) => Ok(*i),
                 }
             } else {
                 Err(memory::Error::OutOfBounds)
@@ -160,7 +157,7 @@ pub mod test_util {
                         self.vec.resize(addr as usize + 1, 0x00);
                         match self.vec.get_mut(addr as usize) {
                             None => unreachable!(),
-                            Some(i) => *i = byte
+                            Some(i) => *i = byte,
                         }
                     }
                 }
@@ -177,8 +174,8 @@ pub mod test_util {
 mod test {
     use std::rc::Rc;
 
-    use super::*;
     use super::test_util::*;
+    use super::*;
 
     #[test]
     fn empty_space() {
@@ -222,10 +219,12 @@ mod test {
     fn multiple_storage() {
         let mut space = AddressSpace::new();
 
-        let memory_one: Rc<RefCell<Addressable>> = VecMemory::new_ref_ranged(vec![], 0x0000..=0x00FF);
+        let memory_one: Rc<RefCell<Addressable>> =
+            VecMemory::new_ref_ranged(vec![], 0x0000..=0x00FF);
         space.register_space(Rc::downgrade(&memory_one));
 
-        let memory_two: Rc<RefCell<Addressable>> = VecMemory::new_ref_ranged(vec![], 0x0100..=0x01FF);
+        let memory_two: Rc<RefCell<Addressable>> =
+            VecMemory::new_ref_ranged(vec![], 0x0100..=0x01FF);
         space.register_space(Rc::downgrade(&memory_two));
 
         space.set(0x0020, 0xFF);
