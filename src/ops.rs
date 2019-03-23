@@ -1,5 +1,5 @@
 use crate::{cpu, util};
-use crate::cpu::{FakeInterrupt, Reg8, Reg16, Flag};
+use crate::cpu::{Interrupt, Reg8, Reg16, Flag};
 use std::fmt;
 
 #[derive(Debug)]
@@ -109,7 +109,7 @@ pub(crate) enum Op {
     Ret,
     RetCond(Flag),
     RetEnable,
-    Reset(FakeInterrupt),
+    Reset(Interrupt),
 }
 
 impl Into<Vec<u8>> for Op {
@@ -629,14 +629,14 @@ impl Into<Vec<u8>> for Op {
             //            Op::RetCond(Flag::H) => vec![0x00],
             //            Op::RetCond(Flag::C) => vec![0x00],
             Op::RetEnable => vec![0x00],
-            Op::Reset(FakeInterrupt::Int0x00) => vec![0xC7],
-            Op::Reset(FakeInterrupt::Int0x08) => vec![0xCF],
-            Op::Reset(FakeInterrupt::Int0x10) => vec![0xD7],
-            Op::Reset(FakeInterrupt::Int0x18) => vec![0xDF],
-            Op::Reset(FakeInterrupt::Int0x20) => vec![0xE7],
-            Op::Reset(FakeInterrupt::Int0x28) => vec![0xEF],
-            Op::Reset(FakeInterrupt::Int0x30) => vec![0xF7],
-            Op::Reset(FakeInterrupt::Int0x38) => vec![0xFF],
+            Op::Reset(Interrupt::Int0x00) => vec![0xC7],
+            Op::Reset(Interrupt::Int0x08) => vec![0xCF],
+            Op::Reset(Interrupt::Int0x10) => vec![0xD7],
+            Op::Reset(Interrupt::Int0x18) => vec![0xDF],
+            Op::Reset(Interrupt::Int0x20) => vec![0xE7],
+            Op::Reset(Interrupt::Int0x28) => vec![0xEF],
+            Op::Reset(Interrupt::Int0x30) => vec![0xF7],
+            Op::Reset(Interrupt::Int0x38) => vec![0xFF],
             other => unimplemented!("Invalid opcode: {:?}", other),
         }
     }

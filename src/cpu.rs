@@ -20,32 +20,7 @@ pub(crate) enum Interrupt {
     Timer,
     Serial,
     Joystick,
-}
-
-impl Interrupt {
-    pub fn address(&self) -> u16 {
-        match self {
-            Interrupt::VBlank => 0x0040,
-            Interrupt::LcdStat => 0x0048,
-            Interrupt::Timer => 0x0050,
-            Interrupt::Serial => 0x0058,
-            Interrupt::Joystick => 0x0060,
-        }
-    }
-
-    pub fn value(&self) -> u8 {
-        match self {
-            Interrupt::VBlank => 0,
-            Interrupt::LcdStat => 1,
-            Interrupt::Timer => 2,
-            Interrupt::Serial => 3,
-            Interrupt::Joystick => 4,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum FakeInterrupt {
+    // Fake interrupts
     Int0x00,
     Int0x08,
     Int0x10,
@@ -56,26 +31,64 @@ pub(crate) enum FakeInterrupt {
     Int0x38,
 }
 
-impl FakeInterrupt {
+impl Interrupt {
     pub fn address(&self) -> u16 {
         match self {
-            FakeInterrupt::Int0x00 => 0x0000,
-            FakeInterrupt::Int0x08 => 0x0008,
-            FakeInterrupt::Int0x10 => 0x0010,
-            FakeInterrupt::Int0x18 => 0x0018,
-            FakeInterrupt::Int0x20 => 0x0020,
-            FakeInterrupt::Int0x28 => 0x0028,
-            FakeInterrupt::Int0x30 => 0x0030,
-            FakeInterrupt::Int0x38 => 0x0038,
+            Interrupt::Int0x00 => 0x0000,
+            Interrupt::Int0x08 => 0x0008,
+            Interrupt::Int0x10 => 0x0010,
+            Interrupt::Int0x18 => 0x0018,
+            Interrupt::Int0x20 => 0x0020,
+            Interrupt::Int0x28 => 0x0028,
+            Interrupt::Int0x30 => 0x0030,
+            Interrupt::Int0x38 => 0x0038,
+            Interrupt::VBlank => 0x0040,
+            Interrupt::LcdStat => 0x0048,
+            Interrupt::Timer => 0x0050,
+            Interrupt::Serial => 0x0058,
+            Interrupt::Joystick => 0x0060,
         }
+    }
+
+    pub fn find(enable_flags: u8, request_flags: u8) -> Option<Interrupt> {
+
+//        match self {
+//            Interrupt::VBlank => 0,
+//            Interrupt::LcdStat => 1,
+//            Interrupt::Timer => 2,
+//            Interrupt::Serial => 3,
+//            Interrupt::Joystick => 4,
+//        }
+        None
+    }
+
+    pub fn clear_request_flag(interrupt: Interrupt, request_flags: u8) -> Result<u8, Error> {
+        let mut flags_to_save = request_flags.clone();
+
+        match interrupt {
+            Interrupt::VBlank => util::set_bit(&mut flags_to_save, 0, false),
+            Interrupt::LcdStat => util::set_bit(&mut flags_to_save, 1, false),
+            Interrupt::Timer => util::set_bit(&mut flags_to_save, 2, false),
+            Interrupt::Serial => util::set_bit(&mut flags_to_save, 3, false),
+            Interrupt::Joystick => util::set_bit(&mut flags_to_save, 4, false),
+            _ => return Err(Error::InvalidMemoryAccess)
+        }
+        Ok(flags_to_save)
+    }
+
+    #[inline]
+    fn get_leftmost_set_bit(byte: u8) -> usize {
+//        ((byte as i8) & -(byte as i8)) as i64.log2 + 1
+        0
     }
 }
 
-impl fmt::Display for FakeInterrupt {
+impl fmt::Display for Interrupt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.address())
     }
 }
+
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Reg8 { A, B, C, D, E, H, L }
@@ -104,7 +117,7 @@ impl From<memory::Error> for Error {
 #[derive(Debug)]
 enum MicroOp {
     FetchAndDecode,
-    IrqEnable,
+    IrqEnablePoll,
     Irq { enable_flags: u8 },
     FetchPrefix,
     LoadImm(Reg8),
@@ -180,14 +193,37 @@ impl Cpu {
 
     pub fn step(&mut self) -> Result<bool, Error> {
         match dbg!(self.dequeue()) {
-            MicroOp::IrqEnable => {
-//                let ie_flags = self.mem_read(FLAG_IE)?;
-//                self.enqueue(MicroOp::Irq { enable_flags: ie_flags });
-                self.enqueue(MicroOp::FetchAndDecode);
+            MicroOp::IrqEnablePoll => {
+                let enable_flags = self.mem_read(FLAG_IE)?;
+                self.enqueue(MicroOp::Irq { enable_flags });
             }
             MicroOp::Irq { enable_flags } => {
-                let if_flags = self.mem_read(FLAG_IF)?;
-                unimplemented!()
+                let request_flags = self.mem_read(FLAG_IF)?;
+                match Interrupt::find(enable_flags, request_flags) {
+                    Some(interrupt) => {
+                        self.interrupt_enable_master = false;
+
+                        let flags_to_save = Interrupt::clear_request_flag(interrupt, request_flags)?;
+                        self.mem_write(FLAG_IF, flags_to_save)?;
+
+
+                        // Call iaddr
+//                        self.sp -= 2;
+//                        self.enqueue(MicroOp::MemWriteInd { addr_reg: Reg16::SP, reg: Reg8::A });
+//                        self.memory.borrow_mut().write(self.sp + 1, util::get_high_byte(self.pc));
+//                        self.memory.borrow_mut().write(self.sp, util::get_low_byte(self.pc));
+//                        self.pc = interrupt.address();
+//                        Reg8::PC_HI => util::get_high_byte(self.pc),
+//                        Reg8::PC_LO => util::get_low_byte(self.pc),
+//                        Reg8::SP_HI => util::get_high_byte(self.sp),
+//                        Reg8::SP_LO => util::get_low_byte(self.sp),
+//                        Reg8::PC_HI => util::set_high_byte(&mut self.pc, byte),
+//                        Reg8::PC_LO => util::set_low_byte(&mut self.pc, byte),
+//                        Reg8::SP_HI => util::set_high_byte(&mut self.sp, byte),
+//                        Reg8::SP_LO => util::set_low_byte(&mut self.sp, byte),
+                    }
+                    None => self.enqueue(MicroOp::FetchAndDecode)
+                }
             }
             MicroOp::FetchAndDecode => {
                 let addr = self.read_and_inc_pc();
@@ -322,14 +358,30 @@ impl Cpu {
                 self.temp_reg_l = self.mem_read(addr)?;
                 self.reg_write_word(reg, util::make_word(self.temp_reg_h, self.temp_reg_l));
             }
-            MicroOp::ReadIO => {}
-            MicroOp::StoreIO => {}
-            MicroOp::LoadIOC => {}
-            MicroOp::StoreIOC => {}
-            MicroOp::LoadInc => {}
-            MicroOp::StoreInc => {}
-            MicroOp::LoadDec => {}
-            MicroOp::StoreDec => {}
+            MicroOp::ReadIO => {
+                unimplemented!()
+            }
+            MicroOp::StoreIO => {
+                unimplemented!()
+            }
+            MicroOp::LoadIOC => {
+                unimplemented!()
+            }
+            MicroOp::StoreIOC => {
+                unimplemented!()
+            }
+            MicroOp::LoadInc => {
+                unimplemented!()
+            }
+            MicroOp::StoreInc => {
+                unimplemented!()
+            }
+            MicroOp::LoadDec => {
+                unimplemented!()
+            }
+            MicroOp::StoreDec => {
+                unimplemented!()
+            }
         }
         Ok(!self.halted)
     }
@@ -496,8 +548,8 @@ impl Cpu {
             0x9B => self.sub_carry_byte_reg(Reg8::E),
             0x9C => self.sub_carry_byte_reg(Reg8::H),
             0x9D => self.sub_carry_byte_reg(Reg8::L),
-////                [0xDE, byte] => Ok(Some(Op::SubCarryImmediate(*byte))),
-////                [0x9E] => Ok(Some(Op::SubCarryIndHL)),
+            0xDE => self.enqueue(MicroOp::SubCarryImm),
+            0x9E => self.enqueue(MicroOp::SubCarryInd),
             0xA7 => self.and_byte_reg(Reg8::A),
             0xA0 => self.and_byte_reg(Reg8::B),
             0xA1 => self.and_byte_reg(Reg8::C),
@@ -505,8 +557,8 @@ impl Cpu {
             0xA3 => self.and_byte_reg(Reg8::E),
             0xA4 => self.and_byte_reg(Reg8::H),
             0xA5 => self.and_byte_reg(Reg8::L),
-////                [0xE6, byte] => Ok(Some(Op::AndImmediate(*byte))),
-////                [0xA6] => Ok(Some(Op::AndIndHL)),
+            0xE6 => self.enqueue(MicroOp::AndImm),
+            0xA6 => self.enqueue(MicroOp::AndInd),
             0xAF => self.xor_byte_reg(Reg8::A),
             0xA8 => self.xor_byte_reg(Reg8::B),
             0xA9 => self.xor_byte_reg(Reg8::C),
@@ -514,8 +566,8 @@ impl Cpu {
             0xAB => self.xor_byte_reg(Reg8::E),
             0xAC => self.xor_byte_reg(Reg8::H),
             0xAD => self.xor_byte_reg(Reg8::L),
-////                [0xEE, byte] => Ok(Some(Op::XorImmediate(*byte))),
-////                [0xAE] => Ok(Some(Op::XorIndHL)),
+            0xEE => self.enqueue(MicroOp::XorImm),
+            0xAE => self.enqueue(MicroOp::XorInd),
             0xB7 => self.or_byte_reg(Reg8::A),
             0xB0 => self.or_byte_reg(Reg8::B),
             0xB1 => self.or_byte_reg(Reg8::C),
@@ -523,8 +575,8 @@ impl Cpu {
             0xB3 => self.or_byte_reg(Reg8::E),
             0xB4 => self.or_byte_reg(Reg8::H),
             0xB5 => self.or_byte_reg(Reg8::L),
-////                [0xF6, byte] => Ok(Some(Op::OrImmediate(*byte))),
-////                [0xB6] => Ok(Some(Op::OrIndHL)),
+            0xF6 => self.enqueue(MicroOp::OrImm),
+            0xB6 => self.enqueue(MicroOp::OrInd),
             0xBF => self.cmp_byte_reg(Reg8::A),
             0xB8 => self.cmp_byte_reg(Reg8::B),
             0xB9 => self.cmp_byte_reg(Reg8::C),
@@ -532,8 +584,8 @@ impl Cpu {
             0xBB => self.cmp_byte_reg(Reg8::E),
             0xBC => self.cmp_byte_reg(Reg8::H),
             0xBD => self.cmp_byte_reg(Reg8::L),
-////                [0xFE, byte] => Ok(Some(Op::CmpImmediate(*byte))),
-////                [0xBE] => Ok(Some(Op::CmpIndHL)),
+            0xFE => self.enqueue(MicroOp::CmpImm),
+            0xBE => self.enqueue(MicroOp::CmpInd),
             0x3C => self.inc_byte_reg(Reg8::A),
             0x04 => self.inc_byte_reg(Reg8::B),
             0x0C => self.inc_byte_reg(Reg8::C),
@@ -572,21 +624,51 @@ impl Cpu {
             0x76 => self.halted = true,
             0x10 => self.halted = true,
             0xF3 => self.interrupt_enable_master = false,
-            0xFB => self.interrupt_enable_master = true,
+            0xFB => {
+                self.interrupt_enable_master = true;
+                // The effect of EI is delayed by one instruction.
+                // This means that EI followed immediately by DI
+                // does not allow interrupts between the EI and the DI.
+                // http://gbdev.gg8.se/wiki/articles/Interrupts
+                self.enqueue(MicroOp::FetchAndDecode);
+            }
 ////                [0xC3, h, l] => Ok(Some(Op::Jump(util::make_word(*h, *l)))),
 ////                [0xE9] => Ok(Some(Op::JumpInd)),
 ////                [0x18, offset] => Ok(Some(Op::JumpRel(*offset))),
-////                [0xCD, h, l] => Ok(Some(Op::Call(util::make_word(*h, *l)))),
+            0xCD => {
+                // Call
+                //
+            }
 ////                [0xC9] => Ok(Some(Op::Ret)),
-//                [0x00] => Ok(Some(Op::RetEnable)),
-////                [0xC7] => Ok(Some(Op::Reset(0x00))),
-////                [0xCF] => Ok(Some(Op::Reset(0x08))),
-////                [0xD7] => Ok(Some(Op::Reset(0x10))),
-////                [0xDF] => Ok(Some(Op::Reset(0x18))),
-////                [0xE7] => Ok(Some(Op::Reset(0x20))),
-////                [0xEF] => Ok(Some(Op::Reset(0x28))),
-////                [0xF7] => Ok(Some(Op::Reset(0x30))),
-////                [0xFF] => Ok(Some(Op::Reset(0x38))),
+            0xD9 => {
+                // RET
+                // EI
+            }
+            0xC7 => {
+                // Call
+                //0x00
+            }
+            0xCF => {
+                //0x08
+            }
+            0xD7 => {
+                //0x10
+            }
+            0xDF => {
+                //0x18
+            }
+            0xE7 => {
+                //0x20
+            }
+            0xEF => {
+                //0x28
+            }
+            0xF7 => {
+                //0x30
+            }
+            0xFF => {
+                //0x38
+            }
             _ => unimplemented!()
         }
         Ok(())
@@ -607,7 +689,13 @@ impl Cpu {
     #[inline]
     fn dequeue(&mut self) -> MicroOp {
         match self.op_queue.pop_front() {
-            None => MicroOp::IrqEnable,
+            None => {
+                if self.interrupt_enable_master {
+                    MicroOp::IrqEnablePoll
+                } else {
+                    MicroOp::FetchAndDecode
+                }
+            }
             Some(op) => op
         }
     }
@@ -737,41 +825,6 @@ impl Cpu {
 
     fn dec_byte_tmp_hi(&mut self) {
         unimplemented!()
-    }
-
-    #[inline]
-    fn get_leftmost_set_bit(byte: u8) -> usize {
-//        ((byte as i8) & -(byte as i8)) as i64.log2 + 1
-        0
-    }
-
-    fn process_interrupt_if_requested_and_allowed(
-        &mut self,
-        interrupt_enable_flags: u8,
-        interrupt_flags: u8,
-        interrupt: Interrupt,
-    ) -> Result<bool, Error> {
-        if util::get_bit(interrupt_enable_flags, interrupt.value())
-            && util::get_bit(interrupt_flags, interrupt.value())
-        {
-            self.interrupt_enable_master = false;
-
-            let mut flags_to_save = interrupt_flags.clone();
-            util::set_bit(&mut flags_to_save, interrupt.value(), false);
-
-            match self.memory.borrow_mut().write(FLAG_IF, flags_to_save) {
-                Ok(_) => (),
-                Err(_) => return Err(Error::InvalidMemoryAccess),
-            }
-
-            self.sp -= 2;
-            self.memory.borrow_mut().write(self.sp + 1, util::get_high_byte(self.pc));
-            self.memory.borrow_mut().write(self.sp, util::get_low_byte(self.pc));
-            self.pc = interrupt.address();
-            return Ok(true);
-        }
-
-        Ok(false)
     }
 
     fn reg_read_byte(&self, reg: Reg8) -> u8 {
