@@ -53,7 +53,7 @@ pub trait Addressable {
 }
 
 pub struct AddressSpace {
-    map: HashMap<RangeInclusive<u16>, Rc<RefCell<dyn Addressable>>>,
+    map: HashMap<RangeInclusive<u16>, Weak<RefCell<dyn Addressable>>>,
 }
 
 impl AddressSpace {
@@ -65,7 +65,7 @@ impl AddressSpace {
 
     pub fn register_space(&mut self, storage: Rc<RefCell<dyn Addressable>>) {
         for range in &storage.borrow().address_ranges() {
-            self.map.insert(range.clone(), storage.clone());
+            self.map.insert(range.clone(), Rc::downgrade(&storage));
         }
     }
 }
@@ -78,7 +78,10 @@ impl Addressable for AddressSpace {
     fn read(&self, addr: u16) -> Result<u8, Error> {
         for (range, storage) in &self.map {
             if &addr >= range.start() && &addr <= range.end() {
-                return storage.borrow().read(addr);
+                match storage.upgrade() {
+                    Some(s) => return s.borrow().read(addr),
+                    None => return Err(Error::Unavailable(addr))
+                }
             }
         }
 
@@ -88,7 +91,10 @@ impl Addressable for AddressSpace {
     fn write(&mut self, addr: u16, byte: u8) -> Result<(), Error> {
         for (range, storage) in &self.map {
             if &addr >= range.start() && &addr <= range.end() {
-                return storage.borrow_mut().write(addr, byte);
+                match storage.upgrade() {
+                    Some(s) => return s.borrow_mut().write(addr, byte),
+                    None => return Err(Error::Unavailable(addr))
+                }
             }
         }
 

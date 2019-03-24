@@ -1,6 +1,7 @@
 use crate::{cpu, util};
-use crate::cpu::{Interrupt, Reg8, Reg16, Flag};
+use crate::cpu::{Reg8, Reg16, Flag};
 use std::fmt;
+use crate::interrupts::Interrupt;
 
 #[derive(Debug)]
 pub(crate) enum Op {

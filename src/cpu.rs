@@ -1,94 +1,18 @@
 use std;
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::fmt;
+use std::fmt::Debug;
+use std::io::{Read, Write};
 use std::io::SeekFrom::Start;
 use std::ops::{Index, IndexMut, RangeInclusive};
 use std::rc::Rc;
 use std::rc::Weak;
 
+use crate::cpu::MicroOp::FetchAndDecode;
+use crate::interrupts::InterruptController;
 use crate::memory;
 use crate::util;
-use std::io::{Read, Write};
-use std::collections::VecDeque;
-use crate::cpu::MicroOp::FetchAndDecode;
-use std::fmt::Debug;
-
-#[derive(Debug)]
-pub(crate) enum Interrupt {
-    VBlank,
-    LcdStat,
-    Timer,
-    Serial,
-    Joystick,
-    // Fake interrupts
-    Int0x00,
-    Int0x08,
-    Int0x10,
-    Int0x18,
-    Int0x20,
-    Int0x28,
-    Int0x30,
-    Int0x38,
-}
-
-impl Interrupt {
-    pub fn address(&self) -> u16 {
-        match self {
-            Interrupt::Int0x00 => 0x0000,
-            Interrupt::Int0x08 => 0x0008,
-            Interrupt::Int0x10 => 0x0010,
-            Interrupt::Int0x18 => 0x0018,
-            Interrupt::Int0x20 => 0x0020,
-            Interrupt::Int0x28 => 0x0028,
-            Interrupt::Int0x30 => 0x0030,
-            Interrupt::Int0x38 => 0x0038,
-            Interrupt::VBlank => 0x0040,
-            Interrupt::LcdStat => 0x0048,
-            Interrupt::Timer => 0x0050,
-            Interrupt::Serial => 0x0058,
-            Interrupt::Joystick => 0x0060,
-        }
-    }
-
-    pub fn find(enable_flags: u8, request_flags: u8) -> Option<Interrupt> {
-
-//        match self {
-//            Interrupt::VBlank => 0,
-//            Interrupt::LcdStat => 1,
-//            Interrupt::Timer => 2,
-//            Interrupt::Serial => 3,
-//            Interrupt::Joystick => 4,
-//        }
-        None
-    }
-
-    pub fn clear_request_flag(interrupt: Interrupt, request_flags: u8) -> Result<u8, Error> {
-        let mut flags_to_save = request_flags.clone();
-
-        match interrupt {
-            Interrupt::VBlank => util::set_bit(&mut flags_to_save, 0, false),
-            Interrupt::LcdStat => util::set_bit(&mut flags_to_save, 1, false),
-            Interrupt::Timer => util::set_bit(&mut flags_to_save, 2, false),
-            Interrupt::Serial => util::set_bit(&mut flags_to_save, 3, false),
-            Interrupt::Joystick => util::set_bit(&mut flags_to_save, 4, false),
-            _ => return Err(Error::InvalidMemoryAccess)
-        }
-        Ok(flags_to_save)
-    }
-
-    #[inline]
-    fn get_leftmost_set_bit(byte: u8) -> usize {
-//        ((byte as i8) & -(byte as i8)) as i64.log2 + 1
-        0
-    }
-}
-
-impl fmt::Display for Interrupt {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.address())
-    }
-}
-
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Reg8 { A, B, C, D, E, H, L }
@@ -159,9 +83,6 @@ enum MicroOp {
 //    MemWrite { addr: u16, reg: Reg8 },
 }
 
-const FLAG_IE: u16 = 0xFFFF;
-const FLAG_IF: u16 = 0xFF0F;
-
 pub struct Cpu {
     halted: bool,
     pc: u16,
@@ -194,18 +115,16 @@ impl Cpu {
     pub fn step(&mut self) -> Result<bool, Error> {
         match dbg!(self.dequeue()) {
             MicroOp::IrqEnablePoll => {
-                let enable_flags = self.mem_read(FLAG_IE)?;
-                self.enqueue(MicroOp::Irq { enable_flags });
+                // Dummy OP: interrupt request check does 2 memory accesses, thus 2 ticks
             }
             MicroOp::Irq { enable_flags } => {
-                let request_flags = self.mem_read(FLAG_IF)?;
-                match Interrupt::find(enable_flags, request_flags) {
+                match InterruptController::poll(self.memory.borrow())? {
                     Some(interrupt) => {
                         self.interrupt_enable_master = false;
 
-                        let flags_to_save = Interrupt::clear_request_flag(interrupt, request_flags)?;
-                        self.mem_write(FLAG_IF, flags_to_save)?;
-
+                        {
+                            InterruptController::clear_request(self.memory.borrow_mut(), interrupt)?;
+                        }
 
                         // Call iaddr
 //                        self.sp -= 2;
@@ -917,9 +836,9 @@ mod test {
     use crate::memory::Addressable;
     use crate::memory::test_util::VecMemory;
     use crate::ops;
+    use crate::ops::Op;
 
     use super::*;
-    use crate::ops::Op;
 
     fn compile<Ops>(ops: Ops) -> Vec<u8> where Ops: IntoIterator<Item=Op> {
         let mut bytes = vec![];
