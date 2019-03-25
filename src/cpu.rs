@@ -16,10 +16,10 @@ use crate::util;
 use crate::util::{Byte, Bit};
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum Reg8 { A, B, C, D, E, H, L }
+pub(crate) enum Reg8 { A, B, C, D, E, H, L, SPHi, SPLow, PCHi, PCLo, TempHi, TempLow }
 
 #[derive(Debug)]
-pub(crate) enum Reg16 { AF, BC, DE, HL, SP, PC }
+pub(crate) enum Reg16 { AF, BC, DE, HL, SP, PC, Temp }
 
 #[derive(Debug)]
 pub(crate) enum Flag { Z, N, H, C }
@@ -74,53 +74,39 @@ impl From<memory::Error> for Error {
 }
 
 #[derive(Debug)]
+enum AddressMode {
+    Immediate,
+    Indirect(Reg16),
+    IndirectIO(Reg8),
+    IndirectInc,
+    IndirectDec,
+}
+
+enum PostOp {
+    Add(Reg8),
+    AddCarry(Reg8),
+    Sub(Reg8),
+    SubCarry(Reg8),
+    And(Reg8),
+    Xor(Reg8),
+    Or(Reg8),
+    Cmp(Reg8),
+}
+
 enum MicroOp {
     FetchAndDecode,
     IrqEnablePoll,
     Irq { enable_flags: u8 },
     FetchPrefix,
-    LoadImm(Reg8),
-    MemReadInd { reg: Reg8, addr_reg: Reg16 },
-    MemWriteInd { addr_reg: Reg16, reg: Reg8 },
-    TempLoadHighImm,
-    TempLoadLowImm,
-    MemReadImmLowStoreWord { reg: Reg16 },
-    MemReadIndTemp { reg: Reg8 },
-    MemWriteIndTempHigh { addr_reg: Reg16 },
-    AddImm,
-    AddCarryImm,
-    SubImm,
-    SubCarryImm,
-    XorImm,
-    OrImm,
-    AndImm,
-    CmpImm,
-    AddInd,
-    AddCarryInd,
-    SubInd,
-    SubCarryInd,
-    XorInd,
-    OrInd,
-    AndInd,
-    CmpInd,
-    IncInd,
-    DecInd,
-    ReadIO,
-    StoreIO,
-    LoadIOC,
-    StoreIOC,
-    LoadInc,
-    StoreInc,
-    LoadDec,
-    StoreDec,
+    MemRead(AddressMode, Reg8, Option<PostOp>),
+    MemWrite(AddressMode, Reg8),
 }
 
 pub struct CPU {
     halted: bool,
     pc: u16,
     sp: u16,
-    temp_reg_h: u8,
-    temp_reg_l: u8,
+    temp_reg: u16,
     registers: [u16; 4],
     memory: Rc<RefCell<dyn memory::Addressable>>,
     op_queue: VecDeque<MicroOp>,
@@ -136,8 +122,7 @@ impl CPU {
             halted: false,
             pc: 0,
             sp: 0,
-            temp_reg_h: 0,
-            temp_reg_l: 0,
+            temp_reg: 0,
             registers: [0; 4],
             memory,
             op_queue,
@@ -146,7 +131,7 @@ impl CPU {
     }
 
     pub fn step(&mut self) -> Result<bool, Error> {
-        match dbg!(self.dequeue()) {
+        match self.dequeue() {
             MicroOp::IrqEnablePoll => {
                 // Dummy OP: interrupt request check does 2 memory accesses, thus 2 ticks
             }
@@ -182,157 +167,25 @@ impl CPU {
                 let opcode = self.mem_read(addr)?;
                 self.decode(opcode)?;
             }
-            MicroOp::LoadImm(reg) => {
-                let addr = self.read_and_inc_pc();
-                let byte = self.mem_read(addr)?;
-                self.reg_write_byte(reg, byte);
-            }
             MicroOp::FetchPrefix => {
                 let addr = self.read_and_inc_pc();
                 let opcode = self.mem_read(addr)?;
                 self.decode_prefix(opcode)?;
             }
-            MicroOp::MemReadInd { reg, addr_reg } => {
-                let addr = self.reg_read_word(addr_reg);
+            MicroOp::MemRead(address_mode, dst, post_op) => {
+                let addr = self.get_addr(address_mode);
                 let byte = self.mem_read(addr)?;
-                self.reg_write_byte(reg, byte);
+                self.reg_write_byte(dst, byte);
+
+                match post_op {
+                    Some(op) => {},
+                    None => {}
+                };
             }
-            MicroOp::MemWriteInd { addr_reg, reg } => {
-                let addr = self.reg_read_word(addr_reg);
-                let byte = self.reg_read_byte(reg);
+            MicroOp::MemWrite(address_mode, src) => {
+                let addr = self.get_addr(address_mode);
+                let byte = self.reg_read_byte(src);
                 self.mem_write(addr, byte)?;
-            }
-            MicroOp::TempLoadHighImm => {
-                let addr = self.read_and_inc_pc();
-                self.temp_reg_h = self.mem_read(addr)?;
-            }
-            MicroOp::TempLoadLowImm => {
-                let addr = self.read_and_inc_pc();
-                self.temp_reg_l = self.mem_read(addr)?;
-            }
-            MicroOp::MemReadIndTemp { reg } => {
-                let addr = util::make_word(self.temp_reg_h, self.temp_reg_l);
-                let byte = self.mem_read(addr)?;
-                self.reg_write_byte(reg, byte);
-            }
-            MicroOp::MemWriteIndTempHigh { addr_reg } => {
-                let addr = self.reg_read_word(addr_reg);
-                self.mem_write(addr, self.temp_reg_h)?;
-            }
-            MicroOp::AddImm => {
-                let addr = self.read_and_inc_pc();
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.add_byte_tmp_hi();
-            }
-            MicroOp::AddCarryImm => {
-                let addr = self.read_and_inc_pc();
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.add_carry_byte_tmp_hi();
-            }
-            MicroOp::SubImm => {
-                let addr = self.read_and_inc_pc();
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.sub_byte_tmp_hi();
-            }
-            MicroOp::SubCarryImm => {
-                let addr = self.read_and_inc_pc();
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.sub_carry_byte_tmp_hi();
-            }
-            MicroOp::XorImm => {
-                let addr = self.read_and_inc_pc();
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.xor_byte_tmp_hi();
-            }
-            MicroOp::OrImm => {
-                let addr = self.read_and_inc_pc();
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.or_byte_tmp_hi();
-            }
-            MicroOp::AndImm => {
-                let addr = self.read_and_inc_pc();
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.and_byte_tmp_hi();
-            }
-            MicroOp::CmpImm => {
-                let addr = self.read_and_inc_pc();
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.cmp_byte_tmp_hi();
-            }
-            MicroOp::AddInd => {
-                let addr = self.reg_read_word(Reg16::HL);
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.add_byte_tmp_hi();
-            }
-            MicroOp::AddCarryInd => {
-                let addr = self.reg_read_word(Reg16::HL);
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.add_carry_byte_tmp_hi();
-            }
-            MicroOp::SubInd => {
-                let addr = self.reg_read_word(Reg16::HL);
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.sub_byte_tmp_hi();
-            }
-            MicroOp::SubCarryInd => {
-                let addr = self.reg_read_word(Reg16::HL);
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.sub_carry_byte_tmp_hi();
-            }
-            MicroOp::XorInd => {
-                let addr = self.reg_read_word(Reg16::HL);
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.xor_byte_tmp_hi();
-            }
-            MicroOp::OrInd => {
-                let addr = self.reg_read_word(Reg16::HL);
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.or_byte_tmp_hi();
-            }
-            MicroOp::AndInd => {
-                let addr = self.reg_read_word(Reg16::HL);
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.and_byte_tmp_hi();
-            }
-            MicroOp::CmpInd => {
-                let addr = self.reg_read_word(Reg16::HL);
-                self.temp_reg_h = self.mem_read(addr)?;
-                self.cmp_byte_tmp_hi();
-            }
-            MicroOp::IncInd => {
-                unimplemented!()
-            }
-            MicroOp::DecInd => {
-                unimplemented!()
-            }
-            MicroOp::MemReadImmLowStoreWord { reg } => {
-                let addr = self.read_and_inc_pc();
-                self.temp_reg_l = self.mem_read(addr)?;
-                self.reg_write_word(reg, util::make_word(self.temp_reg_h, self.temp_reg_l));
-            }
-            MicroOp::ReadIO => {
-                unimplemented!()
-            }
-            MicroOp::StoreIO => {
-                unimplemented!()
-            }
-            MicroOp::LoadIOC => {
-                unimplemented!()
-            }
-            MicroOp::StoreIOC => {
-                unimplemented!()
-            }
-            MicroOp::LoadInc => {
-                unimplemented!()
-            }
-            MicroOp::StoreInc => {
-                unimplemented!()
-            }
-            MicroOp::LoadDec => {
-                unimplemented!()
-            }
-            MicroOp::StoreDec => {
-                unimplemented!()
             }
         }
         Ok(!self.halted)
@@ -391,71 +244,74 @@ impl CPU {
             0x6B => self.load_reg(Reg8::L, Reg8::E),
             0x6C => self.load_reg(Reg8::L, Reg8::H),
             0x6D => self.load_reg(Reg8::L, Reg8::L),
-            0x3E => self.enqueue(MicroOp::LoadImm(Reg8::A)),
-            0x06 => self.enqueue(MicroOp::LoadImm(Reg8::B)),
-            0x0E => self.enqueue(MicroOp::LoadImm(Reg8::C)),
-            0x16 => self.enqueue(MicroOp::LoadImm(Reg8::D)),
-            0x1E => self.enqueue(MicroOp::LoadImm(Reg8::E)),
-            0x26 => self.enqueue(MicroOp::LoadImm(Reg8::H)),
-            0x2E => self.enqueue(MicroOp::LoadImm(Reg8::L)),
-            0x0A => self.enqueue(MicroOp::MemReadInd { reg: Reg8::A, addr_reg: Reg16::BC }),
-            0x1A => self.enqueue(MicroOp::MemReadInd { reg: Reg8::A, addr_reg: Reg16::DE }),
-            0x7E => self.enqueue(MicroOp::MemReadInd { reg: Reg8::A, addr_reg: Reg16::HL }),
-            0x46 => self.enqueue(MicroOp::MemReadInd { reg: Reg8::B, addr_reg: Reg16::HL }),
-            0x4E => self.enqueue(MicroOp::MemReadInd { reg: Reg8::C, addr_reg: Reg16::HL }),
-            0x56 => self.enqueue(MicroOp::MemReadInd { reg: Reg8::D, addr_reg: Reg16::HL }),
-            0x5E => self.enqueue(MicroOp::MemReadInd { reg: Reg8::E, addr_reg: Reg16::HL }),
-            0x66 => self.enqueue(MicroOp::MemReadInd { reg: Reg8::H, addr_reg: Reg16::HL }),
-            0x6E => self.enqueue(MicroOp::MemReadInd { reg: Reg8::L, addr_reg: Reg16::HL }),
+            0x3E => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::A, None)),
+            0x06 => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::B, None)),
+            0x0E => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::C, None)),
+            0x16 => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::D, None)),
+            0x1E => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::E, None)),
+            0x26 => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::H, None)),
+            0x2E => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::L, None)),
+            0x0A => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::BC), Reg8::A, None)),
+            0x1A => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::DE), Reg8::A, None)),
+            0x7E => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::A, None)),
+            0x46 => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::B, None)),
+            0x4E => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::C, None)),
+            0x56 => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::D, None)),
+            0x5E => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::E, None)),
+            0x66 => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::H, None)),
+            0x6E => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::L, None)),
             0xFA => {
-                self.enqueue(MicroOp::TempLoadHighImm);
-                self.enqueue(MicroOp::TempLoadLowImm);
-                self.enqueue(MicroOp::MemReadIndTemp { reg: Reg8::A });
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::TempHi, None));
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::TempLow, None));
+                self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::Temp), Reg8::A, None));
             }
-            0x02 => self.enqueue(MicroOp::MemWriteInd { reg: Reg8::A, addr_reg: Reg16::BC }),
-            0x12 => self.enqueue(MicroOp::MemWriteInd { reg: Reg8::A, addr_reg: Reg16::DE }),
-            0x77 => self.enqueue(MicroOp::MemWriteInd { reg: Reg8::A, addr_reg: Reg16::HL }),
-            0x70 => self.enqueue(MicroOp::MemWriteInd { reg: Reg8::B, addr_reg: Reg16::HL }),
-            0x71 => self.enqueue(MicroOp::MemWriteInd { reg: Reg8::C, addr_reg: Reg16::HL }),
-            0x72 => self.enqueue(MicroOp::MemWriteInd { reg: Reg8::D, addr_reg: Reg16::HL }),
-            0x73 => self.enqueue(MicroOp::MemWriteInd { reg: Reg8::E, addr_reg: Reg16::HL }),
-            0x74 => self.enqueue(MicroOp::MemWriteInd { reg: Reg8::H, addr_reg: Reg16::HL }),
-            0x75 => self.enqueue(MicroOp::MemWriteInd { reg: Reg8::L, addr_reg: Reg16::HL }),
+            0x02 => self.enqueue(MicroOp::MemWrite(AddressMode::Indirect(Reg16::BC), Reg8::A)),
+            0x12 => self.enqueue(MicroOp::MemWrite(AddressMode::Indirect(Reg16::DE), Reg8::A)),
+            0x77 => self.enqueue(MicroOp::MemWrite(AddressMode::Indirect(Reg16::HL), Reg8::A)),
+            0x70 => self.enqueue(MicroOp::MemWrite(AddressMode::Indirect(Reg16::HL), Reg8::B)),
+            0x71 => self.enqueue(MicroOp::MemWrite(AddressMode::Indirect(Reg16::HL), Reg8::C)),
+            0x72 => self.enqueue(MicroOp::MemWrite(AddressMode::Indirect(Reg16::HL), Reg8::D)),
+            0x73 => self.enqueue(MicroOp::MemWrite(AddressMode::Indirect(Reg16::HL), Reg8::E)),
+            0x74 => self.enqueue(MicroOp::MemWrite(AddressMode::Indirect(Reg16::HL), Reg8::H)),
+            0x75 => self.enqueue(MicroOp::MemWrite(AddressMode::Indirect(Reg16::HL), Reg8::L)),
             0x36 => {
-                self.enqueue(MicroOp::TempLoadHighImm);
-                self.enqueue(MicroOp::MemWriteIndTempHigh { addr_reg: Reg16::HL });
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::TempHi, None));
+                self.enqueue(MicroOp::MemWrite(AddressMode::Indirect(Reg16::HL), Reg8::TempHi));
             }
-////                [0xEA, h, l] => Ok(Some(Op::StoreIndAImmediate(util::make_word(*h, *l)))),
+            0xEA => {
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::TempHi, None));
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::TempLow, None));
+                self.enqueue(MicroOp::MemWrite(AddressMode::Indirect(Reg16::Temp), Reg8::A));
+            }
             0xF0 => {
-                self.enqueue(MicroOp::TempLoadHighImm);
-                self.enqueue(MicroOp::ReadIO);
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::TempHi, None));
+                self.enqueue(MicroOp::MemRead(AddressMode::IndirectIO(Reg8::TempHi), Reg8::A, None));
             }
             0xE0 => {
-                self.enqueue(MicroOp::TempLoadHighImm);
-                self.enqueue(MicroOp::StoreIO);
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::TempHi, None));
+                self.enqueue(MicroOp::MemWrite(AddressMode::IndirectIO(Reg8::TempHi), Reg8::A));
             }
-            0xF2 => self.enqueue(MicroOp::LoadIOC),
-            0xE2 => self.enqueue(MicroOp::StoreIOC),
-            0x2A => self.enqueue(MicroOp::LoadInc),
-            0x22 => self.enqueue(MicroOp::StoreInc),
-            0x3A => self.enqueue(MicroOp::LoadDec),
-            0x32 => self.enqueue(MicroOp::StoreDec),
+            0xF2 => self.enqueue(MicroOp::MemRead(AddressMode::IndirectIO(Reg8::C), Reg8::A, None)),
+            0xE2 => self.enqueue(MicroOp::MemWrite(AddressMode::IndirectIO(Reg8::C), Reg8::A)),
+//            0x2A => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::A, Box::new(|cpu| { CPU::reg_write_word(cpu, Reg16::HL, CPU::reg_read_word(cpu, Reg16::HL) + 1) }))),
+//            0x22 => self.enqueue(MicroOp::MemWriteAndDo(AddressMode::Indirect(Reg16::HL), Reg8::A, Box::new(|cpu| { CPU::reg_write_word(cpu, Reg16::HL, CPU::reg_read_word(cpu, Reg16::HL) + 1) }))),
+//            0x3A => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::A, Box::new(|cpu| { CPU::reg_write_word(cpu, Reg16::HL, CPU::reg_read_word(cpu, Reg16::HL) - 1) }))),
+//            0x32 => self.enqueue(MicroOp::MemWriteAndDo(AddressMode::Indirect(Reg16::HL), Reg8::A, Box::new(|cpu| { CPU::reg_write_word(cpu, Reg16::HL, CPU::reg_read_word(cpu, Reg16::HL) - 1) }))),
             0x01 => {
-                // TODO: Replace with half-register
-                self.enqueue(MicroOp::TempLoadHighImm);
-                self.enqueue(MicroOp::MemReadImmLowStoreWord { reg: Reg16::BC });
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::B, None));
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::C, None));
             }
             0x11 => {
-                self.enqueue(MicroOp::TempLoadHighImm);
-                self.enqueue(MicroOp::MemReadImmLowStoreWord { reg: Reg16::DE });
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::D, None));
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::E, None));
             }
             0x21 => {
-                self.enqueue(MicroOp::TempLoadHighImm);
-                self.enqueue(MicroOp::MemReadImmLowStoreWord { reg: Reg16::HL });
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::H, None));
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::L, None));
             }
             0x31 => {
-                self.enqueue(MicroOp::TempLoadHighImm);
-                self.enqueue(MicroOp::MemReadImmLowStoreWord { reg: Reg16::SP });
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::SPHi, None));
+                self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::SPLow, None));
             }
 ////                [0xF9] => Ok(Some(Op::LoadSP)),
 ////                [0xC5] => Ok(Some(Op::Push(Reg16::BC))),
@@ -473,8 +329,8 @@ impl CPU {
             0x83 => self.add_byte_reg(Reg8::E),
             0x84 => self.add_byte_reg(Reg8::H),
             0x85 => self.add_byte_reg(Reg8::L),
-            0xC6 => self.enqueue(MicroOp::AddImm),
-            0x86 => self.enqueue(MicroOp::AddInd),
+            0xC6 => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::A, Some(PostOp::Add(Reg8::A)))),
+            0x86 => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::TempHi, Some(PostOp::Add(Reg8::TempHi)))),
             0x8F => self.add_carry_byte_reg(Reg8::A),
             0x88 => self.add_carry_byte_reg(Reg8::B),
             0x89 => self.add_carry_byte_reg(Reg8::C),
@@ -482,8 +338,8 @@ impl CPU {
             0x8B => self.add_carry_byte_reg(Reg8::E),
             0x8C => self.add_carry_byte_reg(Reg8::H),
             0x8D => self.add_carry_byte_reg(Reg8::L),
-            0xCE => self.enqueue(MicroOp::AddCarryImm),
-            0x8E => self.enqueue(MicroOp::AddCarryInd),
+            0xCE => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::A, Some(PostOp::AddCarry(Reg8::A)))),
+            0x8E => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::TempHi, Some(PostOp::AddCarry(Reg8::TempHi)))),
             0x97 => self.sub_byte_reg(Reg8::A),
             0x90 => self.sub_byte_reg(Reg8::B),
             0x91 => self.sub_byte_reg(Reg8::C),
@@ -491,8 +347,8 @@ impl CPU {
             0x93 => self.sub_byte_reg(Reg8::E),
             0x94 => self.sub_byte_reg(Reg8::H),
             0x95 => self.sub_byte_reg(Reg8::L),
-            0xD6 => self.enqueue(MicroOp::SubImm),
-            0x96 => self.enqueue(MicroOp::SubInd),
+            0xD6 => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::A, Some(PostOp::Sub(Reg8::A)))),
+            0x96 => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::TempHi, Some(PostOp::Sub(Reg8::TempHi)))),
             0x9F => self.sub_carry_byte_reg(Reg8::A),
             0x98 => self.sub_carry_byte_reg(Reg8::B),
             0x99 => self.sub_carry_byte_reg(Reg8::C),
@@ -500,8 +356,8 @@ impl CPU {
             0x9B => self.sub_carry_byte_reg(Reg8::E),
             0x9C => self.sub_carry_byte_reg(Reg8::H),
             0x9D => self.sub_carry_byte_reg(Reg8::L),
-            0xDE => self.enqueue(MicroOp::SubCarryImm),
-            0x9E => self.enqueue(MicroOp::SubCarryInd),
+            0xDE => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::A, Some(PostOp::SubCarry(Reg8::A)))),
+            0x9E => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::TempHi, Some(PostOp::SubCarry(Reg8::TempHi)))),
             0xA7 => self.and_byte_reg(Reg8::A),
             0xA0 => self.and_byte_reg(Reg8::B),
             0xA1 => self.and_byte_reg(Reg8::C),
@@ -509,8 +365,8 @@ impl CPU {
             0xA3 => self.and_byte_reg(Reg8::E),
             0xA4 => self.and_byte_reg(Reg8::H),
             0xA5 => self.and_byte_reg(Reg8::L),
-            0xE6 => self.enqueue(MicroOp::AndImm),
-            0xA6 => self.enqueue(MicroOp::AndInd),
+            0xE6 => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::A, Some(PostOp::And(Reg8::A)))),
+            0xA6 => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::TempHi, Some(PostOp::And(Reg8::TempHi)))),
             0xAF => self.xor_byte_reg(Reg8::A),
             0xA8 => self.xor_byte_reg(Reg8::B),
             0xA9 => self.xor_byte_reg(Reg8::C),
@@ -518,8 +374,8 @@ impl CPU {
             0xAB => self.xor_byte_reg(Reg8::E),
             0xAC => self.xor_byte_reg(Reg8::H),
             0xAD => self.xor_byte_reg(Reg8::L),
-            0xEE => self.enqueue(MicroOp::XorImm),
-            0xAE => self.enqueue(MicroOp::XorInd),
+            0xEE => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::A, Some(PostOp::Xor(Reg8::A)))),
+            0xAE => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::TempHi, Some(PostOp::Xor(Reg8::TempHi)))),
             0xB7 => self.or_byte_reg(Reg8::A),
             0xB0 => self.or_byte_reg(Reg8::B),
             0xB1 => self.or_byte_reg(Reg8::C),
@@ -527,8 +383,8 @@ impl CPU {
             0xB3 => self.or_byte_reg(Reg8::E),
             0xB4 => self.or_byte_reg(Reg8::H),
             0xB5 => self.or_byte_reg(Reg8::L),
-            0xF6 => self.enqueue(MicroOp::OrImm),
-            0xB6 => self.enqueue(MicroOp::OrInd),
+            0xF6 => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::A, Some(PostOp::Or(Reg8::A)))),
+            0xB6 => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::TempHi, Some(PostOp::Or(Reg8::TempHi)))),
             0xBF => self.cmp_byte_reg(Reg8::A),
             0xB8 => self.cmp_byte_reg(Reg8::B),
             0xB9 => self.cmp_byte_reg(Reg8::C),
@@ -536,8 +392,8 @@ impl CPU {
             0xBB => self.cmp_byte_reg(Reg8::E),
             0xBC => self.cmp_byte_reg(Reg8::H),
             0xBD => self.cmp_byte_reg(Reg8::L),
-            0xFE => self.enqueue(MicroOp::CmpImm),
-            0xBE => self.enqueue(MicroOp::CmpInd),
+            0xFE => self.enqueue(MicroOp::MemRead(AddressMode::Immediate, Reg8::A, Some(PostOp::Cmp(Reg8::A)))),
+            0xBE => self.enqueue(MicroOp::MemRead(AddressMode::Indirect(Reg16::HL), Reg8::TempHi, Some(PostOp::Cmp(Reg8::TempHi)))),
             0x3C => self.inc_byte_reg(Reg8::A),
             0x04 => self.inc_byte_reg(Reg8::B),
             0x0C => self.inc_byte_reg(Reg8::C),
@@ -675,6 +531,24 @@ impl CPU {
         self.reg_write_byte(dst, byte);
     }
 
+    fn get_addr(&mut self, address_mode: AddressMode) -> u16 {
+        match address_mode {
+            AddressMode::Immediate => self.read_and_inc_pc(),
+            AddressMode::Indirect(src) => self.reg_read_word(src),
+            AddressMode::IndirectIO(reg) => self.reg_read_byte(reg) as u16 + 0xFF00,
+            AddressMode::IndirectInc => {
+                let addr = self.reg_read_word(Reg16::HL);
+                self.reg_write_word(Reg16::HL, addr.wrapping_add(1));
+                addr
+            }
+            AddressMode::IndirectDec => {
+                let addr = self.reg_read_word(Reg16::HL);
+                self.reg_write_word(Reg16::HL, addr.wrapping_add(1));
+                addr
+            }
+        }
+    }
+
     fn add_byte_reg(&mut self, reg: Reg8) {
         let a = self.reg_read_byte(Reg8::A);
         let b = self.reg_read_byte(reg);
@@ -739,46 +613,6 @@ impl CPU {
         }
     }
 
-    fn add_byte_tmp_hi(&mut self) {
-        unimplemented!()
-    }
-
-    fn add_carry_byte_tmp_hi(&mut self) {
-        unimplemented!()
-    }
-
-    fn sub_byte_tmp_hi(&mut self) {
-        unimplemented!()
-    }
-
-    fn sub_carry_byte_tmp_hi(&mut self) {
-        unimplemented!()
-    }
-
-    fn and_byte_tmp_hi(&mut self) {
-        unimplemented!()
-    }
-
-    fn xor_byte_tmp_hi(&mut self) {
-        unimplemented!()
-    }
-
-    fn or_byte_tmp_hi(&mut self) {
-        unimplemented!()
-    }
-
-    fn cmp_byte_tmp_hi(&mut self) {
-        unimplemented!()
-    }
-
-    fn inc_byte_tmp_hi(&mut self) {
-        unimplemented!()
-    }
-
-    fn dec_byte_tmp_hi(&mut self) {
-        unimplemented!()
-    }
-
     fn reg_read_byte(&self, reg: Reg8) -> u8 {
         match reg {
             Reg8::A => self.registers[0].get_hi(),
@@ -788,6 +622,12 @@ impl CPU {
             Reg8::E => self.registers[2].get_low(),
             Reg8::H => self.registers[3].get_hi(),
             Reg8::L => self.registers[3].get_low(),
+            Reg8::SPHi => self.sp.get_hi(),
+            Reg8::SPLow => self.sp.get_low(),
+            Reg8::PCHi => self.pc.get_hi(),
+            Reg8::PCLo => self.pc.get_low(),
+            Reg8::TempHi => self.temp_reg.get_hi(),
+            Reg8::TempLow => self.temp_reg.get_low(),
         }
     }
 
@@ -799,6 +639,7 @@ impl CPU {
             Reg16::HL => self.registers[3],
             Reg16::SP => self.sp,
             Reg16::PC => self.pc,
+            Reg16::Temp => self.temp_reg,
         }
     }
 
@@ -811,6 +652,12 @@ impl CPU {
             Reg8::E => self.registers[2].set_low(byte),
             Reg8::H => self.registers[3].set_hi(byte),
             Reg8::L => self.registers[3].set_low(byte),
+            Reg8::SPHi => self.sp.set_hi(byte),
+            Reg8::SPLow => self.sp.set_low(byte),
+            Reg8::PCHi => self.pc.set_hi(byte),
+            Reg8::PCLo => self.pc.set_low(byte),
+            Reg8::TempHi => self.temp_reg.set_hi(byte),
+            Reg8::TempLow => self.temp_reg.set_low(byte),
         }
     }
 
@@ -822,6 +669,7 @@ impl CPU {
             Reg16::HL => self.registers[3] = word,
             Reg16::SP => self.sp = word,
             Reg16::PC => self.pc = word,
+            Reg16::Temp => self.temp_reg = word,
         }
     }
 
@@ -918,8 +766,7 @@ mod test {
             println!("cpu.halted: {:?}", cpu.halted);
             println!("cpu.pc: {:?}", cpu.pc);
             println!("cpu.sp: {:?}", cpu.sp);
-            println!("cpu.temp_reg_h: {:?}", cpu.temp_reg_h);
-            println!("cpu.temp_reg_l: {:?}", cpu.temp_reg_l);
+            println!("cpu.temp_reg_h: {:?}", cpu.temp_reg);
             println!("cpu.registers: {:?}", cpu.registers);
 
             match cpu.step() {
