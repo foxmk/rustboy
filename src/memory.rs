@@ -5,8 +5,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::ops::RangeInclusive;
-use std::rc::Weak;
 use std::rc::Rc;
+use std::rc::Weak;
 
 pub mod constants {
     const ROM_FIXED_START: u16 = 0x0000;
@@ -105,7 +105,7 @@ impl Addressable for AddressSpace {
 #[cfg(test)]
 pub mod test_util {
     use std;
-    use std::cell::{RefCell, Ref};
+    use std::cell::{Ref, RefCell};
     use std::ops::RangeInclusive;
     use std::rc::Rc;
 
@@ -159,11 +159,11 @@ pub mod test_util {
 
 #[cfg(test)]
 mod test {
+    use std::ops::{Add, Range};
     use std::rc::Rc;
 
-    use super::test_util::*;
     use super::*;
-    use std::ops::{Range, Add};
+    use super::test_util::*;
 
     #[test]
     fn empty_space() {

@@ -3,13 +3,15 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
-use minifb::{Key, Window, WindowOptions};
-use crate::memory::AddressSpace;
-use crate::cpu::CPU;
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::ppu::PPU;
+
+use minifb::{Key, Window, WindowOptions};
+
+use crate::cpu::CPU;
 use crate::interrupts::InterruptController;
+use crate::memory::AddressSpace;
+use crate::ppu::PPU;
 
 mod cpu;
 mod memory;

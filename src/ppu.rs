@@ -1,12 +1,13 @@
-use crate::memory;
-
-use std::ops::RangeInclusive;
+use std::cell::RefCell;
 use std::io::Write;
+use std::ops::RangeInclusive;
+use std::rc::Rc;
+
+use crate::interrupts::{Interrupt, InterruptController};
+use crate::memory;
 use crate::ppu::PPUMode::OAM;
 use crate::util;
-use crate::interrupts::{InterruptController, Interrupt};
-use std::cell::RefCell;
-use std::rc::Rc;
+use crate::util::Bit;
 
 pub enum Error {}
 
@@ -72,35 +73,35 @@ impl PPU {
     const WX: u16 = 0xFF4B;
 
     #[doc = "Bit 7 - LCD Display Enable (0=Off, 1=On)"]
-    const DISPLAY_ENABLE: u8 = 7;
+    const DISPLAY_ENABLE: usize = 7;
     #[doc = "Bit 6 - Window Tile Map Display Select (0=9800-9BFF, 1=9C00-9FFF)"]
-    const WIN_TILE_MAP: u8 = 6;
+    const WIN_TILE_MAP: usize = 6;
     #[doc = "Bit 5 - Window Display Enable (0=Off, 1=On)"]
-    const WINDOW_ENABLE: u8 = 5;
+    const WINDOW_ENABLE: usize = 5;
     #[doc = "Bit 4 - BG & Window Tile Data Select (0=8800-97FF, 1=8000-8FFF)"]
-    const TILE_DATA: u8 = 4;
+    const TILE_DATA: usize = 4;
     #[doc = "Bit 3 - BG Tile Map Display Select (0=9800-9BFF, 1=9C00-9FFF)"]
-    const BG_TILE_MAP: u8 = 3;
+    const BG_TILE_MAP: usize = 3;
     #[doc = "Bit 2 - OBJ (Sprite) Size (0=8x8, 1=8x16)"]
-    const OBJ_SIZE: u8 = 2;
+    const OBJ_SIZE: usize = 2;
     #[doc = "Bit 1 - OBJ (Sprite) Display Enable (0=Off, 1=On)"]
-    const OBJ_ENABLE: u8 = 1;
+    const OBJ_ENABLE: usize = 1;
     #[doc = "Bit 0 - BG/Window Display/Priority (0=Off, 1=On)"]
-    const BG_PRIORITY: u8 = 0;
+    const BG_PRIORITY: usize = 0;
 
     #[doc = "Bit 6 - LYC=LY Coincidence Interrupt (1=Enable) (Read/Write)"]
-    const LCY_INT: u8 = 6;
+    const LCY_INT: usize = 6;
     #[doc = "Bit 5 - Mode 2 OAM Interrupt (1=Enable) (Read/Write)"]
-    const OAM_INT: u8 = 5;
+    const OAM_INT: usize = 5;
     #[doc = "Bit 4 - Mode 1 V-Blank Interrupt (1=Enable) (Read/Write)"]
-    const VBLANK_INT: u8 = 4;
+    const VBLANK_INT: usize = 4;
     #[doc = "Bit 3 - Mode 0 H-Blank Interrupt (1=Enable) (Read/Write)"]
-    const HBLANK_INT: u8 = 3;
+    const HBLANK_INT: usize = 3;
     #[doc = "Bit 2 - Coincidence Flag  (0:LYC<>LY, 1:LYC=LY) (Read Only)"]
-    const LCY_FLAG: u8 = 2;
+    const LCY_FLAG: usize = 2;
     #[doc = "Bit 1-0 - Mode Flag (Mode 0-3, see below) (Read Only)"]
-    const MODE_TRANSFER: u8 = 1;
-    const MODE: u8 = 0;
+    const MODE_TRANSFER: usize = 1;
+    const MODE: usize = 0;
 
     const OAM_SIZE: usize = (PPU::OAM_END - PPU::OAM_START + 1) as usize;
     const VRAM_SIZE: usize = (PPU::VRAM_END - PPU::VRAM_START + 1) as usize;
@@ -193,38 +194,38 @@ impl PPU {
         match self.mode {
             PPUMode::OAM { .. } => {
                 // Mode 2
-                util::set_bit(&mut self.stat, PPU::MODE_TRANSFER, true);
-                util::set_bit(&mut self.stat, PPU::MODE, false);
+                self.stat.set_bit(PPU::MODE_TRANSFER, true as usize);
+                self.stat.set_bit(PPU::MODE, false as usize);
             }
             PPUMode::OAMRAM { .. } => {
                 // Mode 3
-                util::set_bit(&mut self.stat, PPU::MODE_TRANSFER, true);
-                util::set_bit(&mut self.stat, PPU::MODE, true);
+                self.stat.set_bit(PPU::MODE_TRANSFER, true as usize);
+                self.stat.set_bit(PPU::MODE, true as usize);
             }
             PPUMode::HBlank { .. } => {
                 // Mode 0
-                util::set_bit(&mut self.stat, PPU::MODE_TRANSFER, false);
-                util::set_bit(&mut self.stat, PPU::MODE, false);
+                self.stat.set_bit(PPU::MODE_TRANSFER, false as usize);
+                self.stat.set_bit(PPU::MODE, false as usize);
             }
             PPUMode::VBlank { .. } => {
                 // Mode 1
-                util::set_bit(&mut self.stat, PPU::MODE_TRANSFER, false);
-                util::set_bit(&mut self.stat, PPU::MODE, true);
+                self.stat.set_bit(PPU::MODE_TRANSFER, false as usize);
+                self.stat.set_bit(PPU::MODE, true as usize);
             }
         }
     }
 
     fn scanline(&mut self) {
-        let mut line = self.framebuffer[self.ly];
+//        let mut line = self.framebuffer[self.ly];
 
         // VRAM offset for the tile map
-        let mut mapoffs = if util::get_bit(self.lcdc, PPU::BG_TILE_MAP) { 0x1C00 } else { 0x1800 };
+//        let mut mapoffs = if util::get_bit(self.lcdc, PPU::BG_TILE_MAP) { 0x1C00 } else { 0x1800 };
 
         // Which line of tiles to use in the map
-        mapoffs += ((self.ly + self.scy) & 255) >> 3;
+//        mapoffs += ((self.ly + self.scy) & 255) >> 3;
 
         // Which tile to start with in the map line
-        let lineoffs = self.scx >> 3;
+//        let lineoffs = self.scx >> 3;
 //
 //        // Which line of pixels to use in the tiles
 //        var y = (GPU._line + GPU._scy) & 7;

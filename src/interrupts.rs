@@ -1,10 +1,13 @@
-use memory::Addressable;
+use core::borrow::BorrowMut;
+use std::cell::{Ref, RefMut};
 use std::fmt;
 use std::ops::RangeInclusive;
+
+use memory::Addressable;
+
 use crate::{memory, util};
 use crate::interrupts::Interrupt::Serial;
-use std::cell::{Ref, RefMut};
-use core::borrow::BorrowMut;
+use crate::util::Bit;
 
 #[derive(Debug)]
 pub enum Interrupt {
@@ -13,28 +16,12 @@ pub enum Interrupt {
     Timer,
     Serial,
     Joystick,
-    // Fake interrupts
-    Int0x00,
-    Int0x08,
-    Int0x10,
-    Int0x18,
-    Int0x20,
-    Int0x28,
-    Int0x30,
-    Int0x38,
+
 }
 
 impl Interrupt {
     pub fn address(&self) -> u16 {
         match self {
-            Interrupt::Int0x00 => 0x0000,
-            Interrupt::Int0x08 => 0x0008,
-            Interrupt::Int0x10 => 0x0010,
-            Interrupt::Int0x18 => 0x0018,
-            Interrupt::Int0x20 => 0x0020,
-            Interrupt::Int0x28 => 0x0028,
-            Interrupt::Int0x30 => 0x0030,
-            Interrupt::Int0x38 => 0x0038,
             Interrupt::VBlank => 0x0040,
             Interrupt::LcdStat => 0x0048,
             Interrupt::Timer => 0x0050,
@@ -87,13 +74,12 @@ impl InterruptController {
         let mut flags_to_save = mem.read(InterruptController::FLAG_IF)?;
 
         match int {
-            Interrupt::VBlank => util::set_bit(&mut flags_to_save, 0, false),
-            Interrupt::LcdStat => util::set_bit(&mut flags_to_save, 1, false),
-            Interrupt::Timer => util::set_bit(&mut flags_to_save, 2, false),
-            Interrupt::Serial => util::set_bit(&mut flags_to_save, 3, false),
-            Interrupt::Joystick => util::set_bit(&mut flags_to_save, 4, false),
-            _ => unimplemented!()
-        }
+            Interrupt::VBlank => flags_to_save.set_bit(0, 0),
+            Interrupt::LcdStat => flags_to_save.set_bit(1, 0),
+            Interrupt::Timer => flags_to_save.set_bit(2, 0),
+            Interrupt::Serial => flags_to_save.set_bit(3, 0),
+            Interrupt::Joystick => flags_to_save.set_bit(4, 0),
+        };
 
         mem.write(InterruptController::FLAG_IF, flags_to_save)
     }

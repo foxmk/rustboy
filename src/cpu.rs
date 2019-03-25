@@ -13,6 +13,7 @@ use crate::cpu::MicroOp::FetchAndDecode;
 use crate::interrupts::InterruptController;
 use crate::memory;
 use crate::util;
+use crate::util::{Byte, Bit};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Reg8 { A, B, C, D, E, H, L }
@@ -22,6 +23,40 @@ pub(crate) enum Reg16 { AF, BC, DE, HL, SP, PC }
 
 #[derive(Debug)]
 pub(crate) enum Flag { Z, N, H, C }
+
+#[derive(Debug)]
+pub(crate) enum RstVector {
+    // Fake interrupts
+    Int0x00,
+    Int0x08,
+    Int0x10,
+    Int0x18,
+    Int0x20,
+    Int0x28,
+    Int0x30,
+    Int0x38,
+}
+
+impl RstVector {
+    pub fn address(&self) -> u16 {
+        match self {
+            RstVector::Int0x00 => 0x0000,
+            RstVector::Int0x08 => 0x0008,
+            RstVector::Int0x10 => 0x0010,
+            RstVector::Int0x18 => 0x0018,
+            RstVector::Int0x20 => 0x0020,
+            RstVector::Int0x28 => 0x0028,
+            RstVector::Int0x30 => 0x0030,
+            RstVector::Int0x38 => 0x0038,
+        }
+    }
+}
+
+impl fmt::Display for RstVector {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.address())
+    }
+}
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Error {
@@ -746,13 +781,13 @@ impl CPU {
 
     fn reg_read_byte(&self, reg: Reg8) -> u8 {
         match reg {
-            Reg8::A => util::get_high_byte(self.registers[0]),
-            Reg8::B => util::get_high_byte(self.registers[1]),
-            Reg8::C => util::get_low_byte(self.registers[1]),
-            Reg8::D => util::get_high_byte(self.registers[2]),
-            Reg8::E => util::get_low_byte(self.registers[2]),
-            Reg8::H => util::get_high_byte(self.registers[3]),
-            Reg8::L => util::get_low_byte(self.registers[3]),
+            Reg8::A => self.registers[0].get_hi(),
+            Reg8::B => self.registers[1].get_hi(),
+            Reg8::C => self.registers[1].get_low(),
+            Reg8::D => self.registers[2].get_hi(),
+            Reg8::E => self.registers[2].get_low(),
+            Reg8::H => self.registers[3].get_hi(),
+            Reg8::L => self.registers[3].get_low(),
         }
     }
 
@@ -769,13 +804,13 @@ impl CPU {
 
     fn reg_write_byte(&mut self, reg: Reg8, byte: u8) {
         match reg {
-            Reg8::A => util::set_high_byte(&mut self.registers[0], byte),
-            Reg8::B => util::set_high_byte(&mut self.registers[1], byte),
-            Reg8::C => util::set_low_byte(&mut self.registers[1], byte),
-            Reg8::D => util::set_high_byte(&mut self.registers[2], byte),
-            Reg8::E => util::set_low_byte(&mut self.registers[2], byte),
-            Reg8::H => util::set_high_byte(&mut self.registers[3], byte),
-            Reg8::L => util::set_low_byte(&mut self.registers[3], byte),
+            Reg8::A => self.registers[0].set_hi(byte),
+            Reg8::B => self.registers[1].set_hi(byte),
+            Reg8::C => self.registers[1].set_low(byte),
+            Reg8::D => self.registers[2].set_hi(byte),
+            Reg8::E => self.registers[2].set_low(byte),
+            Reg8::H => self.registers[3].set_hi(byte),
+            Reg8::L => self.registers[3].set_low(byte),
         }
     }
 
@@ -793,34 +828,34 @@ impl CPU {
 
     fn get_flag(&self, flag: Flag) -> bool {
         match flag {
-            Flag::C => util::get_bit(util::get_low_byte(self.registers[0]), 0),
-            Flag::H => util::get_bit(util::get_low_byte(self.registers[0]), 0),
-            Flag::N => util::get_bit(util::get_low_byte(self.registers[0]), 0),
-            Flag::Z => util::get_bit(util::get_low_byte(self.registers[0]), 0),
+            Flag::C => { false }
+            Flag::H => { false }
+            Flag::N => { false }
+            Flag::Z => { false }
         }
     }
 
     fn set_flag(&mut self, flag: Flag, value: bool) {
         match flag {
             Flag::C => {
-                let mut byte = util::get_low_byte(self.registers[0]);
-                util::set_bit(&mut byte, 0, value);
-                util::set_high_byte(&mut self.registers[0], byte);
+                let mut byte = self.registers[0].get_hi();
+                byte.set_bit(0, value as usize);
+                self.registers[0].set_hi(byte);
             }
             Flag::H => {
-                let mut byte = util::get_low_byte(self.registers[0]);
-                util::set_bit(&mut byte, 0, value);
-                util::set_high_byte(&mut self.registers[0], byte);
+                let mut byte = self.registers[0].get_hi();
+                byte.set_bit(0, value as usize);
+                self.registers[0].set_hi(byte);
             }
             Flag::N => {
-                let mut byte = util::get_low_byte(self.registers[0]);
-                util::set_bit(&mut byte, 0, value);
-                util::set_high_byte(&mut self.registers[0], byte);
+                let mut byte = self.registers[0].get_hi();
+                byte.set_bit(0, value as usize);
+                self.registers[0].set_hi(byte);
             }
             Flag::Z => {
-                let mut byte = util::get_low_byte(self.registers[0]);
-                util::set_bit(&mut byte, 0, value);
-                util::set_high_byte(&mut self.registers[0], byte);
+                let mut byte = self.registers[0].get_hi();
+                byte.set_bit(0, value as usize);
+                self.registers[0].set_hi(byte);
             }
         }
     }

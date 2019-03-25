@@ -1,7 +1,9 @@
-use crate::{cpu, util};
-use crate::cpu::{Reg8, Reg16, Flag};
 use std::fmt;
+
+use crate::{cpu, util};
+use crate::cpu::{Flag, Reg16, Reg8, RstVector};
 use crate::interrupts::Interrupt;
+use crate::util::Byte;
 
 #[derive(Debug)]
 pub(crate) enum Op {
@@ -110,7 +112,7 @@ pub(crate) enum Op {
     Ret,
     RetCond(Flag),
     RetEnable,
-    Reset(Interrupt),
+    Reset(RstVector),
 }
 
 impl Into<Vec<u8>> for Op {
@@ -184,7 +186,7 @@ impl Into<Vec<u8>> for Op {
             Op::LoadInd(Reg8::H, Reg16::HL) => vec![0x66],
             Op::LoadInd(Reg8::L, Reg16::HL) => vec![0x6E],
             Op::LoadIndAImm(word) => {
-                vec![0xFA, util::get_high_byte(word), util::get_low_byte(word)]
+                vec![0xFA, word.get_hi(), word.get_low()]
             }
             // TODO: Split StoreInd Opcodes
             Op::StoreInd(Reg16::BC, Reg8::A) => vec![0x02],
@@ -198,7 +200,7 @@ impl Into<Vec<u8>> for Op {
             Op::StoreInd(Reg16::HL, Reg8::L) => vec![0x75],
             Op::StoreImmediate(byte) => vec![0x36, byte],
             Op::StoreIndAImmediate(word) => {
-                vec![0xEA, util::get_high_byte(word), util::get_low_byte(word)]
+                vec![0xEA, word.get_hi(), word.get_low()]
             }
             Op::LoadIO(offset) => vec![0xF0, offset],
             Op::StoreIO(offset) => vec![0xE0, offset],
@@ -210,16 +212,16 @@ impl Into<Vec<u8>> for Op {
             Op::StoreDec => vec![0x32],
             // 16-bit load/store
             Op::Load16(Reg16::BC, word) => {
-                vec![0x01, util::get_high_byte(word), util::get_low_byte(word)]
+                vec![0x01, word.get_hi(), word.get_low()]
             }
             Op::Load16(Reg16::DE, word) => {
-                vec![0x11, util::get_high_byte(word), util::get_low_byte(word)]
+                vec![0x11, word.get_hi(), word.get_low()]
             }
             Op::Load16(Reg16::HL, word) => {
-                vec![0x21, util::get_high_byte(word), util::get_low_byte(word)]
+                vec![0x21, word.get_hi(), word.get_low()]
             }
             Op::Load16(Reg16::SP, word) => {
-                vec![0x31, util::get_high_byte(word), util::get_low_byte(word)]
+                vec![0x31, word.get_hi(), word.get_low()]
             }
             Op::LoadSP => vec![0xF9],
             Op::Push(Reg16::BC) => vec![0xC5],
@@ -608,36 +610,36 @@ impl Into<Vec<u8>> for Op {
             Op::Di => vec![0xF3],
             Op::Ei => vec![0xFB],
             // Jump
-            Op::Jump(n) => vec![0xC3, util::get_high_byte(n), util::get_low_byte(n)],
+            Op::Jump(n) => vec![0xC3, n.get_hi(), n.get_low()],
             Op::JumpInd => vec![0xE9],
-            //            Op::JumpCond(Flag::Z, n) => vec![0x00, util::get_high_byte(n), util::get_low_byte(n)],
-            //            Op::JumpCond(Flag::N, n) => vec![0x00, util::get_high_byte(n), util::get_low_byte(n)],
-            //            Op::JumpCond(Flag::H, n) => vec![0x00, util::get_high_byte(n), util::get_low_byte(n)],
-            //            Op::JumpCond(Flag::C, n) => vec![0x00, util::get_high_byte(n), util::get_low_byte(n)],
+            //            Op::JumpCond(Flag::Z, n) => vec![0x00, n.get_hi(), util::get_low_byte(n)],
+            //            Op::JumpCond(Flag::N, n) => vec![0x00, n.get_hi(), util::get_low_byte(n)],
+            //            Op::JumpCond(Flag::H, n) => vec![0x00, n.get_hi(), util::get_low_byte(n)],
+            //            Op::JumpCond(Flag::C, n) => vec![0x00, n.get_hi(), util::get_low_byte(n)],
             Op::JumpRel(offset) => vec![0x18, offset],
             //            Op::JumpRelCond(Flag::Z, offset) => vec![0x00, offset],
             //            Op::JumpRelCond(Flag::N, offset) => vec![0x00, offset],
             //            Op::JumpRelCond(Flag::H, offset) => vec![0x00, offset],
             //            Op::JumpRelCond(Flag::C, offset) => vec![0x00, offset],
-            Op::Call(n) => vec![0xCD, util::get_high_byte(n), util::get_low_byte(n)],
-            //            Op::CallCond(Flag::Z, n) => vec![0x00, util::get_high_byte(n), util::get_low_byte(n)],
-            //            Op::CallCond(Flag::N, n) => vec![0x00, util::get_high_byte(n), util::get_low_byte(n)],
-            //            Op::CallCond(Flag::H, n) => vec![0x00, util::get_high_byte(n), util::get_low_byte(n)],
-            //            Op::CallCond(Flag::C, n) => vec![0x00, util::get_high_byte(n), util::get_low_byte(n)],
+            Op::Call(n) => vec![0xCD, n.get_hi(), n.get_low()],
+            //            Op::CallCond(Flag::Z, n) => vec![0x00, n.get_hi(), util::get_low_byte(n)],
+            //            Op::CallCond(Flag::N, n) => vec![0x00, n.get_hi(), util::get_low_byte(n)],
+            //            Op::CallCond(Flag::H, n) => vec![0x00, n.get_hi(), util::get_low_byte(n)],
+            //            Op::CallCond(Flag::C, n) => vec![0x00, n.get_hi(), util::get_low_byte(n)],
             Op::Ret => vec![0xC9],
             //            Op::RetCond(Flag::Z) => vec![0x00],
             //            Op::RetCond(Flag::N) => vec![0x00],
             //            Op::RetCond(Flag::H) => vec![0x00],
             //            Op::RetCond(Flag::C) => vec![0x00],
             Op::RetEnable => vec![0x00],
-            Op::Reset(Interrupt::Int0x00) => vec![0xC7],
-            Op::Reset(Interrupt::Int0x08) => vec![0xCF],
-            Op::Reset(Interrupt::Int0x10) => vec![0xD7],
-            Op::Reset(Interrupt::Int0x18) => vec![0xDF],
-            Op::Reset(Interrupt::Int0x20) => vec![0xE7],
-            Op::Reset(Interrupt::Int0x28) => vec![0xEF],
-            Op::Reset(Interrupt::Int0x30) => vec![0xF7],
-            Op::Reset(Interrupt::Int0x38) => vec![0xFF],
+            Op::Reset(RstVector::Int0x00) => vec![0xC7],
+            Op::Reset(RstVector::Int0x08) => vec![0xCF],
+            Op::Reset(RstVector::Int0x10) => vec![0xD7],
+            Op::Reset(RstVector::Int0x18) => vec![0xDF],
+            Op::Reset(RstVector::Int0x20) => vec![0xE7],
+            Op::Reset(RstVector::Int0x28) => vec![0xEF],
+            Op::Reset(RstVector::Int0x30) => vec![0xF7],
+            Op::Reset(RstVector::Int0x38) => vec![0xFF],
             other => unimplemented!("Invalid opcode: {:?}", other),
         }
     }
