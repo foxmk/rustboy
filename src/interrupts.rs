@@ -16,7 +16,6 @@ pub enum Interrupt {
     Timer,
     Serial,
     Joystick,
-
 }
 
 impl Interrupt {
@@ -54,20 +53,31 @@ impl InterruptController {
     }
 
     pub fn poll(mem: Ref<dyn Addressable>) -> Result<Option<Interrupt>, memory::Error> {
-//        let request_flags = self.mem_read(FLAG_IF)?
+        let enable_flags = mem.read(InterruptController::FLAG_IE)?;
+        let request_flags = mem.read(InterruptController::FLAG_IF)?;
 
-//        match self {
-//            Interrupt::VBlank => 0,
-//            Interrupt::LcdStat => 1,
-//            Interrupt::Timer => 2,
-//            Interrupt::Serial => 3,
-//            Interrupt::Joystick => 4,
-//        }
-        Ok(None)
+        match InterruptController::get_leftmost_set_bit(enable_flags & request_flags) {
+            0 => Ok(Some(Interrupt::VBlank)),
+            1 => Ok(Some(Interrupt::LcdStat)),
+            2 => Ok(Some(Interrupt::Timer)),
+            3 => Ok(Some(Interrupt::Serial)),
+            4 => Ok(Some(Interrupt::Joystick)),
+            _ => Ok(None)
+        }
     }
 
-    pub fn request(mem: RefMut<dyn Addressable>, int: Interrupt) -> Result<(), memory::Error> {
-        Ok(())
+    pub fn request(mut mem: RefMut<dyn Addressable>, int: Interrupt) -> Result<(), memory::Error> {
+        let mut flags_to_save = mem.read(InterruptController::FLAG_IF)?;
+
+        match int {
+            Interrupt::VBlank => flags_to_save.set_bit(0, 1),
+            Interrupt::LcdStat => flags_to_save.set_bit(1, 1),
+            Interrupt::Timer => flags_to_save.set_bit(2, 1),
+            Interrupt::Serial => flags_to_save.set_bit(3, 1),
+            Interrupt::Joystick => flags_to_save.set_bit(4, 1),
+        };
+
+        mem.write(InterruptController::FLAG_IF, flags_to_save)
     }
 
     pub fn clear_request(mut mem: RefMut<dyn Addressable>, int: Interrupt) -> Result<(), memory::Error> {
