@@ -34,14 +34,14 @@ pub mod constants {
 #[derive(Debug, Eq, PartialEq)]
 pub enum Error {
     Unavailable(u16),
-    OutOfBounds,
+    ReadOnly(u16)
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
             Error::Unavailable(addr) => write!(f, "Memory address {:06x} unavailable", addr),
-            Error::OutOfBounds => write!(f, "Some error"),
+            Error::ReadOnly(addr) => write!(f, "Memory address {:06x} is read-only", addr),
         }
     }
 }
@@ -141,7 +141,7 @@ pub mod test_util {
                 let i = addr - self.base_offset;
                 Ok(self.bytes.borrow()[i as usize])
             } else {
-                Err(memory::Error::OutOfBounds)
+                Err(memory::Error::Unavailable(addr))
             }
         }
 
@@ -151,7 +151,7 @@ pub mod test_util {
                 self.bytes.borrow_mut()[i as usize] = byte;
                 Ok(())
             } else {
-                Err(memory::Error::OutOfBounds)
+                Err(memory::Error::Unavailable(addr))
             }
         }
     }

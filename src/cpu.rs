@@ -33,7 +33,7 @@ impl From<memory::Error> for Error {
     fn from(err: memory::Error) -> Self {
         match err {
             memory::Error::Unavailable(_) => Error::InvalidMemoryAccess,
-            memory::Error::OutOfBounds => Error::InvalidMemoryAccess,
+            memory::Error::ReadOnly(_) => Error::InvalidMemoryAccess,
         }
     }
 }
@@ -78,12 +78,9 @@ enum MicroOp {
     StoreInc,
     LoadDec,
     StoreDec,
-//    MemWriteInd { addr: Reg16, reg: Reg8 },
-//    MemRead { addr: u16, reg: Reg8 },
-//    MemWrite { addr: u16, reg: Reg8 },
 }
 
-pub struct Cpu {
+pub struct CPU {
     halted: bool,
     pc: u16,
     sp: u16,
@@ -95,10 +92,11 @@ pub struct Cpu {
     interrupt_enable_master: bool,
 }
 
-impl Cpu {
+impl CPU {
     pub fn new(memory: Rc<RefCell<dyn memory::Addressable>>) -> Self {
         let mut op_queue = VecDeque::with_capacity(3);
         op_queue.push_back(MicroOp::FetchAndDecode);
+
         Self {
             halted: false,
             pc: 0,
@@ -106,8 +104,8 @@ impl Cpu {
             temp_reg_h: 0,
             temp_reg_l: 0,
             registers: [0; 4],
-            memory: memory.clone(),
-            op_queue: op_queue,
+            memory,
+            op_queue,
             interrupt_enable_master: false,
         }
     }
@@ -855,7 +853,7 @@ mod test {
     fn should_increment_pc() {
         let memory = Rc::new(RefCell::new(VecMemory::new(compile(vec![Op::Nop, Op::Halt]))));
 
-        let mut cpu = Cpu::new(memory.clone());
+        let mut cpu = CPU::new(memory.clone());
         assert_eq!(0, cpu.reg_read_word(dbg!(Reg16::PC)), "PC should be 0");
 
         cpu.step();
@@ -879,7 +877,7 @@ mod test {
             Rc::new(RefCell::new(VecMemory::new(bytes)))
         };
 
-        let mut cpu = Cpu::new(memory.clone());
+        let mut cpu = CPU::new(memory.clone());
 
         loop {
             println!("cpu.halted: {:?}", cpu.halted);

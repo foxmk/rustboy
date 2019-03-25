@@ -4,6 +4,7 @@ use std::ops::RangeInclusive;
 use crate::{memory, util};
 use crate::interrupts::Interrupt::Serial;
 use std::cell::{Ref, RefMut};
+use core::borrow::BorrowMut;
 
 #[derive(Debug)]
 pub enum Interrupt {
@@ -82,18 +83,19 @@ impl InterruptController {
         Ok(())
     }
 
-    pub fn clear_request(mem: RefMut<dyn Addressable>, int: Interrupt) -> Result<(), memory::Error> {
-//        let mut flags_to_save = request_flags.clone();
-//
-//        match interrupt {
-//            Interrupt::VBlank => util::set_bit(&mut flags_to_save, 0, false),
-//            Interrupt::LcdStat => util::set_bit(&mut flags_to_save, 1, false),
-//            Interrupt::Timer => util::set_bit(&mut flags_to_save, 2, false),
-//            Interrupt::Serial => util::set_bit(&mut flags_to_save, 3, false),
-//            Interrupt::Joystick => util::set_bit(&mut flags_to_save, 4, false),
-//            _ => return Err(memory::Error::InvalidMemoryAccess)
-//        }
-        Ok(())
+    pub fn clear_request(mut mem: RefMut<dyn Addressable>, int: Interrupt) -> Result<(), memory::Error> {
+        let mut flags_to_save = mem.read(InterruptController::FLAG_IF)?;
+
+        match int {
+            Interrupt::VBlank => util::set_bit(&mut flags_to_save, 0, false),
+            Interrupt::LcdStat => util::set_bit(&mut flags_to_save, 1, false),
+            Interrupt::Timer => util::set_bit(&mut flags_to_save, 2, false),
+            Interrupt::Serial => util::set_bit(&mut flags_to_save, 3, false),
+            Interrupt::Joystick => util::set_bit(&mut flags_to_save, 4, false),
+            _ => unimplemented!()
+        }
+
+        mem.write(InterruptController::FLAG_IF, flags_to_save)
     }
 
 
@@ -123,12 +125,10 @@ impl Addressable for InterruptController {
     fn write(&mut self, address: u16, byte: u8) -> Result<(), memory::Error> {
         match address {
             InterruptController::FLAG_IE => {
-                self.enable_flags = byte;
-                Ok(())
+                Ok(self.enable_flags = byte)
             }
             InterruptController::FLAG_IF => {
-                self.request_flags = byte;
-                Ok(())
+                Ok(self.request_flags = byte)
             }
             other => Err(memory::Error::Unavailable(other))
         }

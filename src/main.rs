@@ -5,16 +5,16 @@
 
 use minifb::{Key, Window, WindowOptions};
 use crate::memory::AddressSpace;
-use crate::cpu::Cpu;
+use crate::cpu::CPU;
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::video::Ppu;
+use crate::ppu::PPU;
 use crate::interrupts::InterruptController;
 
 mod cpu;
 mod memory;
 mod util;
-mod video;
+mod ppu;
 mod ops;
 mod interrupts;
 
@@ -32,13 +32,13 @@ fn main() {
 
     let address_space = Rc::new(RefCell::new(AddressSpace::new()));
 
-    let mut ppu = Rc::new(RefCell::new(Ppu::new()));
+    let ppu = Rc::new(RefCell::new(PPU::new(address_space.clone())));
     address_space.borrow_mut().register_space(ppu.clone());
 
-    let mut int_c = Rc::new(RefCell::new(InterruptController::new()));
+    let int_c = Rc::new(RefCell::new(InterruptController::new()));
     address_space.borrow_mut().register_space(int_c.clone());
 
-    let mut cpu = Rc::new(RefCell::new(Cpu::new(address_space.clone())));
+    let cpu = Rc::new(RefCell::new(CPU::new(address_space.clone())));
 
     cpu.borrow_mut().step();
     ppu.borrow_mut().step();
