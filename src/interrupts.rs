@@ -42,8 +42,8 @@ pub struct InterruptController {
 }
 
 impl InterruptController {
-    const FLAG_IE: u16 = 0xFFFF;
-    const FLAG_IF: u16 = 0xFF0F;
+    pub const FLAG_IE: u16 = 0xFFFF;
+    pub const FLAG_IF: u16 = 0xFF0F;
 
     pub fn new() -> Self {
         Self {
